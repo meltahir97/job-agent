@@ -1,0 +1,70 @@
+-- Job Discovery Agent — SQLite schema
+-- All timestamps are ISO-8601 strings (UTC). Missing source fields stay NULL;
+-- the data/reasoning layers must never fabricate values.
+
+-- Key/value metadata: schema_version, resume_hash, profile_path, last_run_at, ...
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- Normalized job listings fetched by the data layer.
+-- raw_json preserves the exact source payload for grounding/provenance.
+CREATE TABLE IF NOT EXISTS jobs (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    source          TEXT    NOT NULL,            -- e.g. 'adzuna'
+    source_job_id   TEXT    NOT NULL,            -- id within that source
+    fingerprint     TEXT    NOT NULL,            -- normalized hash for cross-source dedup
+    title           TEXT,
+    company         TEXT,
+    location        TEXT,
+    remote          INTEGER,                     -- 1 / 0 / NULL
+    description     TEXT,
+    url             TEXT,
+    salary_min      REAL,
+    salary_max      REAL,
+    salary_currency TEXT,
+    category        TEXT,
+    contract_type   TEXT,
+    posted_at       TEXT,                        -- ISO-8601 from source, may be NULL
+    raw_json        TEXT    NOT NULL,            -- original payload (provenance)
+    first_seen_at   TEXT    NOT NULL,
+    last_seen_at    TEXT    NOT NULL,
+    UNIQUE (source, source_job_id)               -- idempotent re-fetch
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_fingerprint ON jobs (fingerprint);
+CREATE INDEX IF NOT EXISTS idx_jobs_source      ON jobs (source);
+
+-- Model scoring output. One row per (job, stage) scoring event; history kept.
+-- stage = 'triage' (cheap keep/drop) or 'deep' (full 0-100 fit).
+CREATE TABLE IF NOT EXISTS scores (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id      INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+    stage       TEXT    NOT NULL,                -- 'triage' | 'deep'
+    keep        INTEGER,                         -- triage: 1 keep / 0 drop
+    fit_score   INTEGER,                         -- deep: 0-100
+    label       TEXT,                            -- deep: 'match' | 'stretch' | 'skip'
+    rationale   TEXT,
+    red_flags   TEXT,                            -- JSON array (text)
+    model       TEXT    NOT NULL,
+    scored_at   TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_scores_job   ON scores (job_id);
+CREATE INDEX IF NOT EXISTS idx_scores_stage ON scores (stage);
+
+-- User feedback that feeds back into future scoring. One current decision per job.
+CREATE TABLE IF NOT EXISTS feedback (
+    job_id     INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
+    decision   TEXT NOT NULL,                    -- 'saved' | 'dismissed'
+    note       TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Seen-state for notifications so reruns never re-notify about the same job.
+-- A job present here has already appeared in a digest and is skipped thereafter.
+CREATE TABLE IF NOT EXISTS notifications (
+    job_id      INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
+    digest_path TEXT,
+    notified_at TEXT NOT NULL
+);

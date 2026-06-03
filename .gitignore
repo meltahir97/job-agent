@@ -1,0 +1,29 @@
+# --- secrets ---
+.env
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- local state & personal data (not source) ---
+# (comments must be on their own line; git has no inline comments)
+# sqlite db
+data/
+# parsed resume profile (personal)
+profile/
+# your resume PDF (personal)
+resume/
+# generated digests (keep the dir via .gitkeep)
+digests/*.md
+!digests/.gitkeep
+
+# --- os / editor ---
+.DS_Store
+.idea/
+.vscode/
