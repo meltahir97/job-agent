@@ -109,6 +109,37 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_profile(args: argparse.Namespace) -> int:
+    from .reasoning import profile as profile_mod
+    from .reasoning.llm import LLMError
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    try:
+        prof = profile_mod.load_or_build(conn, force=args.force)
+    except FileNotFoundError as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    except LLMError as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    conn.close()
+
+    meta = prof.get("_meta", {})
+    print(f"Profile ready -> {config.PROFILE_PATH}")
+    print(f"  name:      {prof.get('name')}")
+    print(f"  seniority: {prof.get('seniority')}  | years: {prof.get('years_experience')}")
+    print(f"  domains:   {', '.join(prof.get('domains') or []) or '—'}")
+    print(f"  skills:    {len(prof.get('skills') or [])} listed")
+    print(f"  targets:   {', '.join(prof.get('target_titles') or []) or '—'}")
+    if meta:
+        print(f"  built with {meta.get('model')} at {meta.get('built_at')}")
+    return 0
+
+
 def _todo(milestone: int):
     def run(args: argparse.Namespace) -> int:
         print(f"[not implemented yet — milestone {milestone}]")
@@ -141,9 +172,9 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fetch_flags(f)
     f.set_defaults(func=cmd_fetch)
 
-    sub.add_parser("profile", help="Parse resume -> profile JSON (milestone 3)").set_defaults(
-        func=_todo(3)
-    )
+    pr = sub.add_parser("profile", help="Parse resume -> cached profile JSON")
+    pr.add_argument("--force", action="store_true", help="re-parse even if the resume is unchanged")
+    pr.set_defaults(func=cmd_profile)
     sub.add_parser("score", help="Triage + deep-score jobs (milestone 4)").set_defaults(
         func=_todo(4)
     )

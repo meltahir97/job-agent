@@ -72,8 +72,9 @@ uv run python -m job_agent db init          # or: job-agent db init
 job-agent fetch                              # default query set (your roles, Bay Area + remote)
 job-agent fetch --what "director strategy" --where "San Francisco" --max 50 --days 30
 
-# Parse your resume into a cached profile     (milestone 3)
+# Parse your resume into a cached profile (re-parses only when it changes)
 job-agent profile
+job-agent profile --force                    # force re-parse
 
 # Triage + deep-score new jobs                (milestone 4)
 job-agent score
@@ -126,7 +127,7 @@ job_agent/
 
 - [x] **1. Scaffold** — project, env, SQLite schema, CLI surface
 - [x] **2. Data layer + AdzunaSource** — `fetch` stores real listings _(offline-tested; live API run pending your Adzuna keys)_
-- [ ] **3. Resume → cached profile**
+- [x] **3. Resume → cached profile** — pypdf extract + cached JSON, rebuilt only on file change/`--force` _(live LLM call pending API credits)_
 - [ ] **4. Triage + deep-scoring → DB**
 - [ ] **5. Markdown digest**
 - [ ] **6. Dedup + seen-state (incremental reruns)**
