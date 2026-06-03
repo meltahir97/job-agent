@@ -23,7 +23,7 @@ def _load_dotenv(path: Path) -> None:
         key, _, val = line.partition("=")
         key = key.strip()
         val = val.strip().strip('"').strip("'")
-        if key and key not in os.environ:
+        if key and not os.environ.get(key):  # fill if unset OR blank; real values win
             os.environ[key] = val
 
 
