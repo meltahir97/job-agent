@@ -56,7 +56,9 @@ def resolve_company(company: Company, session, *, atses: Optional[List[str]] = N
     for slug in candidate_slugs(company.name):
         for ats in atses:
             n = ats_mod.probe(ats, slug, session, timeout)
-            if n is not None:
+            # Workable's public endpoint returns 200+empty for ANY account, so an empty
+            # board is indistinguishable from "no board" — only trust it when n > 0.
+            if n is not None and (ats != "workable" or n > 0):
                 return Resolution(
                     company.name, ats, slug, "resolved", n, f"{ats}:{slug} ({n} open roles)",
                 )

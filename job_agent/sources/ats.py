@@ -72,9 +72,15 @@ def raw_jobs(ats: str, slug: str, session, timeout: int = 20) -> List[dict]:
             except Exception as e:  # try the next endpoint
                 last_err = e
                 continue
-            jobs = (data.get("results") or data.get("jobs")) if isinstance(data, dict) else None
-            if isinstance(jobs, list):
-                return jobs
+            if isinstance(data, dict):
+                results = data.get("results")
+                if not isinstance(results, list):
+                    results = data.get("jobs")
+                if isinstance(results, list):
+                    # May be [] for a real-but-empty board. The auto-resolver only
+                    # trusts Workable when it returns >0 (its endpoint 200s for any
+                    # slug), but an explicit ats=workable config still gets [].
+                    return results
             last_err = ValueError("workable: unexpected response schema")
         raise last_err or ValueError("workable: no public endpoint responded")
 

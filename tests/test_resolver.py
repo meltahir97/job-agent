@@ -43,6 +43,17 @@ class TestResolve(unittest.TestCase):
         self.assertFalse(r.ok)
         self.assertIn("manually", r.detail)
 
+    def test_workable_empty_board_not_trusted(self):
+        # Workable 200+empty (n=0) must NOT count as a match (no 404 to disprove it).
+        with mock.patch.object(ats_mod, "probe", side_effect=lambda ats, *a: 0 if ats == "workable" else None):
+            r = resolver.resolve_company(Company("Maybe", "auto"), session=None)
+        self.assertEqual(r.status, "unresolved")
+
+    def test_workable_with_jobs_is_trusted(self):
+        with mock.patch.object(ats_mod, "probe", side_effect=lambda ats, *a: 5 if ats == "workable" else None):
+            r = resolver.resolve_company(Company("Maybe", "auto"), session=None)
+        self.assertEqual((r.status, r.ats, r.n_jobs), ("resolved", "workable", 5))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
