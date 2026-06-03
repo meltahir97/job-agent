@@ -103,7 +103,22 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
     processed, new = result
     print(f"   {processed} processed, {new} new, {store.count_jobs(conn)} total in DB.")
-    print("== score ==   [pending — milestone 4]")
+
+    print("== score ==")
+    from .reasoning import profile as profile_mod, scoring
+    from .reasoning.llm import LLMError
+
+    model = config.STRONG_MODEL if getattr(args, "opus", False) else config.DEEP_MODEL
+    try:
+        prof = profile_mod.load_or_build(conn)
+        stats = scoring.run_scoring(conn, prof, deep_model=model)
+        print(
+            f"   triaged {stats['triaged']} (kept {stats['kept']}); "
+            f"deep-scored {stats['deep_scored']} with {model}."
+        )
+    except (LLMError, FileNotFoundError) as e:
+        print(f"   skipped scoring: {e}")
+
     print("== digest ==  [pending — milestone 5]")
     conn.close()
     return 0
@@ -137,6 +152,29 @@ def cmd_profile(args: argparse.Namespace) -> int:
     print(f"  targets:   {', '.join(prof.get('target_titles') or []) or '—'}")
     if meta:
         print(f"  built with {meta.get('model')} at {meta.get('built_at')}")
+    return 0
+
+
+def cmd_score(args: argparse.Namespace) -> int:
+    from .reasoning import profile as profile_mod, scoring
+    from .reasoning.llm import LLMError
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    model = config.STRONG_MODEL if args.opus else config.DEEP_MODEL
+    try:
+        prof = profile_mod.load_or_build(conn)
+        stats = scoring.run_scoring(conn, prof, deep_model=model)
+    except (FileNotFoundError, LLMError) as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    conn.close()
+    print(
+        f"Triaged {stats['triaged']} (kept {stats['kept']}); "
+        f"deep-scored {stats['deep_scored']} with {model}."
+    )
     return 0
 
 
@@ -175,9 +213,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("profile", help="Parse resume -> cached profile JSON")
     pr.add_argument("--force", action="store_true", help="re-parse even if the resume is unchanged")
     pr.set_defaults(func=cmd_profile)
-    sub.add_parser("score", help="Triage + deep-score jobs (milestone 4)").set_defaults(
-        func=_todo(4)
-    )
+    sc = sub.add_parser("score", help="Triage (haiku) + deep-score (sonnet) new jobs")
+    sc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
+    sc.set_defaults(func=cmd_score)
     sub.add_parser("digest", help="Write ranked Markdown digest (milestone 5)").set_defaults(
         func=_todo(5)
     )
@@ -187,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("run", help="Run the full pipeline end-to-end")
     _add_fetch_flags(r)
+    r.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
     r.set_defaults(func=cmd_run)
 
     return p

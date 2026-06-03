@@ -76,8 +76,9 @@ job-agent fetch --what "director strategy" --where "San Francisco" --max 50 --da
 job-agent profile
 job-agent profile --force                    # force re-parse
 
-# Triage + deep-score new jobs                (milestone 4)
+# Triage (haiku) + deep-score (sonnet) new jobs; add --opus for opus deep-scoring
 job-agent score
+job-agent score --opus
 
 # Write a ranked Markdown digest to ./digests (milestone 5)
 job-agent digest
@@ -128,7 +129,7 @@ job_agent/
 - [x] **1. Scaffold** — project, env, SQLite schema, CLI surface
 - [x] **2. Data layer + AdzunaSource** — `fetch` stores real listings _(offline-tested; live API run pending your Adzuna keys)_
 - [x] **3. Resume → cached profile** — pypdf extract + cached JSON, rebuilt only on file change/`--force` _(live LLM call pending API credits)_
-- [ ] **4. Triage + deep-scoring → DB**
+- [x] **4. Triage + deep-scoring → DB** — haiku triage then sonnet/opus deep-score; batched, incremental, grounded _(live calls pending API credits)_
 - [ ] **5. Markdown digest**
 - [ ] **6. Dedup + seen-state (incremental reruns)**
 - [ ] **7. Feedback capture wired into scoring**

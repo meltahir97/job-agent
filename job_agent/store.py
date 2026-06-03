@@ -68,3 +68,63 @@ def upsert_job(conn: sqlite3.Connection, job: Job) -> Tuple[int, bool]:
 
 def count_jobs(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) AS n FROM jobs").fetchone()["n"]
+
+
+# --- scoring persistence + SQL pre-filters (cost control) -------------------
+
+def record_score(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    stage: str,                 # 'triage' | 'deep'
+    model: str,
+    keep: Optional[bool] = None,
+    fit_score: Optional[int] = None,
+    label: Optional[str] = None,
+    rationale: Optional[str] = None,
+    red_flags=None,             # list -> stored as JSON text
+) -> None:
+    conn.execute(
+        "INSERT INTO scores (job_id, stage, keep, fit_score, label, rationale, red_flags, model, scored_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            job_id,
+            stage,
+            None if keep is None else int(bool(keep)),
+            None if fit_score is None else int(fit_score),
+            label,
+            rationale,
+            None if red_flags is None else json.dumps(red_flags, ensure_ascii=False),
+            model,
+            now_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def jobs_needing_triage(conn: sqlite3.Connection):
+    """Jobs that have never been triaged (so we never re-pay to triage)."""
+    return conn.execute(
+        "SELECT * FROM jobs j "
+        "WHERE NOT EXISTS (SELECT 1 FROM scores s WHERE s.job_id=j.id AND s.stage='triage') "
+        "ORDER BY j.first_seen_at DESC"
+    ).fetchall()
+
+
+def jobs_needing_deep(conn: sqlite3.Connection):
+    """Triage survivors (keep=1) that have not yet been deep-scored."""
+    return conn.execute(
+        "SELECT j.* FROM jobs j "
+        "JOIN scores t ON t.job_id=j.id AND t.stage='triage' AND t.keep=1 "
+        "WHERE NOT EXISTS (SELECT 1 FROM scores d WHERE d.job_id=j.id AND d.stage='deep') "
+        "GROUP BY j.id ORDER BY j.first_seen_at DESC"
+    ).fetchall()
+
+
+def feedback_examples(conn: sqlite3.Connection, limit: int = 20):
+    """Recent saved/dismissed decisions to feed back into deep scoring."""
+    return conn.execute(
+        "SELECT f.decision, j.title, j.company FROM feedback f "
+        "JOIN jobs j ON j.id=f.job_id ORDER BY f.updated_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
