@@ -50,10 +50,32 @@ def parse_json(text: str) -> Any:
     raise LLMError(f"Model did not return valid JSON. First 200 chars: {text[:200]!r}")
 
 
+def _error_from_result(rm) -> Optional[str]:
+    """Build a human-readable error from a ResultMessage (the SDK's own exception
+    is cryptic — it reports subtype 'success' even for billing/API errors)."""
+    if rm is None:
+        return None
+    parts = []
+    if getattr(rm, "result", None):
+        parts.append(str(rm.result))
+    if getattr(rm, "errors", None):
+        parts.append("; ".join(str(e) for e in rm.errors))
+    if getattr(rm, "api_error_status", None):
+        parts.append(f"(HTTP {rm.api_error_status})")
+    if not parts:
+        return None
+    msg = " ".join(parts)
+    low = msg.lower()
+    if "credit" in low or "balance" in low:
+        msg += " — add credit at https://console.anthropic.com/settings/billing"
+    return msg
+
+
 async def _aquery(prompt: str, *, model: str, system: str, max_budget_usd: Optional[float]) -> str:
     from claude_agent_sdk import (
         AssistantMessage,
         ClaudeAgentOptions,
+        ResultMessage,
         TextBlock,
         query,
     )
@@ -68,11 +90,20 @@ async def _aquery(prompt: str, *, model: str, system: str, max_budget_usd: Optio
         max_budget_usd=max_budget_usd,
     )
     chunks: list[str] = []
-    async for msg in query(prompt=prompt, options=opts):
-        if isinstance(msg, AssistantMessage):
-            for block in msg.content:
-                if isinstance(block, TextBlock):
-                    chunks.append(block.text)
+    result_msg = None
+    try:
+        async for msg in query(prompt=prompt, options=opts):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        chunks.append(block.text)
+            elif isinstance(msg, ResultMessage):
+                result_msg = msg
+    except Exception as e:
+        # Prefer the CLI's own human-readable result text over its cryptic exception.
+        raise LLMError(_error_from_result(result_msg) or str(e)) from e
+    if result_msg is not None and getattr(result_msg, "is_error", False):
+        raise LLMError(_error_from_result(result_msg) or "model returned an error result")
     return "".join(chunks)
 
 
