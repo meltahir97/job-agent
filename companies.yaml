@@ -1,38 +1,59 @@
-# companies.yaml — your watchlist of target companies.
+# companies.yaml — watchlist from your Google Drive "Next Steps" sheet
+# ("Potential Companies", tiered 1-3), pulled + live-resolved 2026-06-03.
 #
-# The agent polls each company's public ATS job board and surfaces NEW roles you'd
-# be qualified for that are Bay Area in-office or US/SF-remote (scored against your
-# resume profile). Replace the examples below with YOUR target companies.
+# The ats+slug below were verified live against each public board. UNRESOLVED
+# companies (Apple, EA, TCG, Pixar, Google/YouTube, Nvidia) are on Workday /
+# SmartRecruiters / custom career sites with no public Greenhouse/Lever/Ashby/
+# Workable board — listed as comments. Set ats+slug manually if you find one, or
+# they need a new source type (e.g. a Workday adapter — see README roadmap).
 #
-# Each entry:
-#   name: <display name>                       # required
-#   ats:  greenhouse | lever | ashby | workable | auto   # default: auto
-#   slug: <board token>                        # required UNLESS ats: auto
-#
-# - ats: auto  -> the resolver guesses the slug from the name and probes the public
-#                 ATS endpoints; if nothing matches it's reported as UNRESOLVED
-#                 (never guessed). Supply ats+slug manually to fix those.
-# - Explicit is faster and exact. The slug is the token in the board URL, e.g.
-#   boards.greenhouse.io/SLUG, jobs.lever.co/SLUG, jobs.ashbyhq.com/SLUG,
-#   SLUG.workable.com.
-#
-# Tip: if you consider your watchlist private, add `companies.yaml` to .gitignore.
+# Tip: if you consider this watchlist private, add companies.yaml to .gitignore.
 
 companies:
-  # --- auto-resolved examples (replace with your real targets) ---
-  - name: Stripe
-    ats: auto
-  - name: Notion
-    ats: auto
-  - name: Ramp
-    ats: auto
-  - name: Databricks
-    ats: auto
+  # --- Tier 1 ---
+  - name: Netflix              # Lever board exists; 0 open roles at pull time
+    ats: lever
+    slug: netflix
+  - name: Roblox
+    ats: greenhouse
+    slug: roblox
+  - name: Discord
+    ats: greenhouse
+    slug: discord
+  - name: "a16z (Games Fund)"  # resolves to the a16z Greenhouse board (whole firm)
+    ats: greenhouse
+    slug: a16z
+  - name: Epic Games
+    ats: greenhouse
+    slug: epicgames
+  # Apple — UNRESOLVED (custom careers site; no public supported board)
 
-  # --- explicit form examples (ats + slug given) ---
-  # - name: Figma
-  #   ats: greenhouse
-  #   slug: figma
-  # - name: Ramp
-  #   ats: ashby
-  #   slug: ramp
+  # --- Tier 2 ---
+  - name: Spotify
+    ats: lever
+    slug: spotify
+  - name: OpenAI
+    ats: ashby
+    slug: openai
+  - name: Anthropic
+    ats: greenhouse
+    slug: anthropic
+  - name: Reddit
+    ats: greenhouse
+    slug: reddit
+  - name: Roku
+    ats: greenhouse
+    slug: roku
+  # EA — UNRESOLVED (SmartRecruiters)
+  # TCG — UNRESOLVED (no public board found)
+  # Pixar — UNRESOLVED (Disney custom careers)
+  # YouTube / Google — UNRESOLVED (Google custom careers)
+
+  # --- Tier 3 ---
+  - name: Substack
+    ats: ashby
+    slug: substack
+  - name: "Crunchyroll (Sony)"
+    ats: greenhouse
+    slug: crunchyroll
+  # Nvidia — UNRESOLVED (Workday)
