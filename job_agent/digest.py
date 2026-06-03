@@ -94,7 +94,11 @@ def _red_flags(raw) -> List[str]:
     return out
 
 
-def _render_row(row: sqlite3.Row, idx: int) -> str:
+_BADGES = {"match": "⭐ match", "stretch": "🔭 stretch"}
+
+
+def _render_row(row: sqlite3.Row) -> str:
+    badge = _BADGES.get(row["label"], row["label"] or "")
     meta = []
     if row["location"]:
         meta.append(row["location"])
@@ -106,46 +110,48 @@ def _render_row(row: sqlite3.Row, idx: int) -> str:
     if row["posted_at"]:
         meta.append(f"posted {str(row['posted_at'])[:10]}")
     meta.append(f"id {row['id']}")
-    meta_line = "  ·  ".join(meta)
 
-    lines = [
-        f"### {idx}. {row['title'] or 'Untitled role'} — {row['company'] or 'Unknown company'}  ·  **{row['fit_score']}/100**",
-    ]
-    if meta_line:
-        lines.append(meta_line)
+    lines = [f"### {row['title'] or 'Untitled role'}  ·  **{row['fit_score']}/100**  ·  {badge}"]
+    lines.append("  ·  ".join(meta))
     if row["rationale"]:
         lines.append(f"\n**Why:** {row['rationale']}")
     flags = _red_flags(row["red_flags"])
     if flags:
         lines.append(f"**Red flags:** {'; '.join(flags)}")
     if row["url"]:
-        lines.append(f"\n[View posting →]({row['url']})")
+        lines.append(f"\n[Apply →]({row['url']})")
     return "\n".join(lines)
 
 
 def render_markdown(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None) -> str:
     generated_at = generated_at or datetime.now().astimezone()
-    matches = [r for r in rows if r["label"] == "match"]
-    stretch = [r for r in rows if r["label"] == "stretch"]
-
+    n_companies = len({r["company"] for r in rows})
     out = [
         f"# Job digest — {generated_at:%Y-%m-%d}",
         "",
-        f"_{len(rows)} role(s) · ranked by fit · generated {generated_at:%Y-%m-%d %H:%M} by job-agent_",
+        f"_{len(rows)} role(s) at {n_companies} compan{'y' if n_companies == 1 else 'ies'} · "
+        f"grouped by company, ranked by fit · generated {generated_at:%Y-%m-%d %H:%M} by job-agent_",
         "",
         "_Tune future runs: `job-agent feedback <id> --saved` / `--dismissed`._",
     ]
-    if matches:
-        out += ["", f"## ⭐ Matches ({len(matches)})", ""]
-        for i, r in enumerate(matches, 1):
-            out += [_render_row(r, i), "", "---", ""]
-    if stretch:
-        out += ["", f"## 🔭 Stretch ({len(stretch)})", ""]
-        for i, r in enumerate(stretch, 1):
-            out += [_render_row(r, i), "", "---", ""]
     if not rows:
-        out += ["", "_No qualifying roles in this run._"]
+        out += ["", "_No new qualifying roles in this run._"]
+        return "\n".join(out).rstrip() + "\n"
+
+    # Group by company, preserving the global score-desc order: companies appear by
+    # their top role's score, and roles within a company stay ranked by fit.
+    groups: "dict[str, List[sqlite3.Row]]" = {}
+    for r in rows:
+        groups.setdefault(row_company(r), []).append(r)
+    for company, items in groups.items():
+        out += ["", f"## {company} ({len(items)})", ""]
+        for r in items:
+            out += [_render_row(r), "", "---", ""]
     return "\n".join(out).rstrip() + "\n"
+
+
+def row_company(row: sqlite3.Row) -> str:
+    return row["company"] or "Unknown company"
 
 
 def write_digest(

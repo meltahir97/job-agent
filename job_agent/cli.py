@@ -64,29 +64,61 @@ def _run_fetch(conn, qs) -> tuple:
     return processed, new
 
 
+def _run_watchlist(conn):
+    """Poll the company watchlist via ATS feeds, location-filter, upsert.
+
+    Returns (in_scope, new) or None if the watchlist can't be loaded.
+    """
+    from .companies import CompaniesError, load_companies
+    from .sources.watchlist import WatchlistSource
+
+    try:
+        companies = load_companies()
+    except (FileNotFoundError, CompaniesError) as e:
+        print(f"error: {e}")
+        print(f"Edit your watchlist at {config.COMPANIES_PATH}.")
+        return None
+
+    print(f"  watchlist: {len(companies)} companies from {config.COMPANIES_PATH.name}")
+    jobs, report = WatchlistSource(companies).collect()
+
+    new = 0
+    for job in jobs:
+        _, is_new = store.upsert_job(conn, job)
+        new += int(is_new)
+
+    for r in report.fetched_ok:
+        print(f"    + {r.company} [{r.resolution.ats}]: {r.fetched} fetched, {r.kept} in-scope")
+    for r in report.errored:
+        print(f"    ! {r.company}: {r.error}")
+    if report.unresolved:
+        print("  UNRESOLVED — add `ats` + `slug` in companies.yaml for:")
+        for r in report.unresolved:
+            print(f"      - {r.company}")
+    return len(jobs), new
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
     db.init_db(conn)
 
-    if args.what:
-        qs = [
-            JobQuery(
-                keywords=args.what,
-                location=args.where,
-                max_results=args.max,
-                max_days_old=args.days,
-            )
-        ]
+    if args.adzuna:
+        print("== adzuna (keyword source) ==")
+        if args.what:
+            qs = [JobQuery(keywords=args.what, location=args.where, max_results=args.max, max_days_old=args.days)]
+        else:
+            qs = queries.default_queries(max_results=args.max, max_days_old=args.days)
+        result = _run_fetch(conn, qs)
     else:
-        qs = queries.default_queries(max_results=args.max, max_days_old=args.days)
+        print("== watchlist ==")
+        result = _run_watchlist(conn)
 
-    result = _run_fetch(conn, qs)
     if result is None:
         conn.close()
         return 2
     processed, new = result
-    print(f"Done: {processed} listings processed, {new} new, {store.count_jobs(conn)} total in DB.")
+    print(f"Done: {processed} in-scope, {new} new, {store.count_jobs(conn)} total in DB.")
     conn.close()
     return 0
 
@@ -97,12 +129,15 @@ def cmd_run(args: argparse.Namespace) -> int:
     conn = db.connect()
     db.init_db(conn)
     print("== fetch ==")
-    result = _run_fetch(conn, queries.default_queries(max_results=args.max, max_days_old=args.days))
+    if getattr(args, "adzuna", False):
+        result = _run_fetch(conn, queries.default_queries(max_results=args.max, max_days_old=args.days))
+    else:
+        result = _run_watchlist(conn)
     if result is None:
         conn.close()
         return 2
     processed, new = result
-    print(f"   {processed} processed, {new} new, {store.count_jobs(conn)} total in DB.")
+    print(f"   {processed} in-scope, {new} new, {store.count_jobs(conn)} total in DB.")
 
     print("== score ==")
     from .reasoning import profile as profile_mod, scoring
@@ -235,10 +270,14 @@ def cmd_feedback(args: argparse.Namespace) -> int:
 
 
 def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--what", help="ad-hoc keyword search (overrides default query set)")
-    p.add_argument("--where", help="location for the ad-hoc search, e.g. 'San Francisco'")
-    p.add_argument("--max", type=int, default=50, help="max results per query (default 50)")
-    p.add_argument("--days", type=int, default=30, help="max age in days (default 30)")
+    p.add_argument(
+        "--adzuna", action="store_true",
+        help="use the Adzuna keyword source instead of the company watchlist (default)",
+    )
+    p.add_argument("--what", help="[adzuna] ad-hoc keyword search (overrides the default query set)")
+    p.add_argument("--where", help="[adzuna] location for the ad-hoc search, e.g. 'San Francisco'")
+    p.add_argument("--max", type=int, default=50, help="[adzuna] max results per query (default 50)")
+    p.add_argument("--days", type=int, default=30, help="[adzuna] max age in days (default 30)")
 
 
 def _add_digest_flags(p: argparse.ArgumentParser) -> None:
@@ -260,7 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
         func=cmd_db_init
     )
 
-    f = sub.add_parser("fetch", help="Fetch + store raw listings from Adzuna")
+    f = sub.add_parser("fetch", help="Fetch + store listings (company watchlist by default; --adzuna for keyword search)")
     _add_fetch_flags(f)
     f.set_defaults(func=cmd_fetch)
 

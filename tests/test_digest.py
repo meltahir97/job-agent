@@ -57,8 +57,11 @@ class TestDigest(unittest.TestCase):
     def test_markdown_content_and_formatting(self):
         rows = digest.select_for_digest(self.conn, min_score=60)
         md = digest.render_markdown(rows)
-        self.assertIn("## ⭐ Matches (1)", md)
-        self.assertIn("## 🔭 Stretch (1)", md)
+        self.assertIn("## Co 1 (1)", md)                     # grouped by company
+        self.assertIn("## Co 2 (1)", md)
+        self.assertLess(md.index("Co 1"), md.index("Co 2"))  # top-scoring company first
+        self.assertIn("⭐ match", md)                         # per-role label badge
+        self.assertIn("🔭 stretch", md)
         self.assertIn("88/100", md)
         self.assertIn("Strong overlap on corp dev.", md)
         self.assertIn("$180k–$240k USD", md)               # salary formatted

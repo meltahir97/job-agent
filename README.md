@@ -1,28 +1,33 @@
 # Job Discovery Agent
 
-A personal, incremental job-discovery agent. It fetches real listings, scores how
-well each fits *your* background using Claude, and writes you a ranked Markdown
-digest — never re-notifying you about a job you've already seen.
+A personal, incremental job-discovery agent. By default it polls the public ATS job
+boards of a **watchlist of target companies** (`companies.yaml`), keeps only roles
+that are **Bay-Area in-office or US/SF-remote**, scores how well each fits *your*
+background using Claude, and writes you a ranked Markdown digest **grouped by
+company** — never re-notifying you about a role you've already seen. (A broad Adzuna
+keyword search is still available behind `--adzuna`.)
 
 It is built in two **strictly separated** layers:
 
 | Layer | Code | LLM? | Job |
 |-------|------|------|-----|
-| **Data** | `job_agent/sources/*`, `job_agent/db.py` | No | Fetch, normalize, and store raw listings in SQLite |
+| **Data** | `job_agent/sources/*`, `job_agent/db.py` | No | Poll company ATS feeds (Greenhouse/Lever/Ashby/Workable), normalize, location-filter, store in SQLite |
 | **Reasoning** | `job_agent/reasoning/*` (via `claude-agent-sdk`) | Yes | Triage, deep-score, dedupe, and explain — **only** over records the data layer fetched |
 
 **Grounding guarantee:** the model scores only listings passed to it as data. It
-never invents a job, URL, or salary. Missing fields stay `null`.
+never invents a job, URL, salary, company, or ATS feed. Missing fields stay `null`;
+companies that can't be confidently resolved are reported, not guessed.
 
 ---
 
 ## Pipeline
 
 ```
-fetch -> normalize -> dedupe -> triage (haiku) -> deep-score (sonnet) -> digest -> feedback
+watchlist (ATS feeds) -> normalize -> location-filter -> dedupe
+   -> triage (haiku) -> deep-score (sonnet) -> digest (grouped by company) -> feedback
 ```
 
-Everything is persisted to SQLite, so reruns are **incremental**: already-seen jobs
+Everything is persisted to SQLite, so reruns are **incremental**: already-seen roles
 are skipped and you are never notified twice.
 
 ---
@@ -33,7 +38,8 @@ are skipped and you are never notified twice.
   This repo's data layer is also 3.9-compatible, but use 3.11+ for the full pipeline.
 - **Node.js 18+** available on PATH. The Agent SDK ships a **bundled** Claude Code CLI
   (its transport), so no separate `@anthropic-ai/claude-code` install is needed.
-- An **Anthropic API key** (with credit balance) and free **Adzuna API** keys.
+- An **Anthropic API key** (with credit balance). **Adzuna keys are optional** —
+  only needed for the `--adzuna` keyword source; the default watchlist needs no keys.
 
 ### Recommended setup with `uv` (no sudo, no system Python changes)
 
@@ -49,14 +55,18 @@ uv pip install -e .
 
 > Prefer stock tooling? `python3.11 -m venv .venv && source .venv/bin/activate && pip install -e .`
 
-### Configure secrets
+### Configure secrets + watchlist
 
 ```bash
 cp .env.example .env
-# then edit .env and fill in ANTHROPIC_API_KEY, ADZUNA_APP_ID, ADZUNA_APP_KEY
+# edit .env: ANTHROPIC_API_KEY is required; ADZUNA_* only matter for --adzuna.
+
+# then edit your target companies:
+$EDITOR companies.yaml
 ```
 
-Secrets live in `.env` only and `.env` is git-ignored.
+Secrets live in `.env` only (git-ignored). Your watchlist lives in `companies.yaml`
+(schema + resolving below).
 
 ---
 
@@ -66,9 +76,9 @@ Secrets live in `.env` only and `.env` is git-ignored.
 # Initialize the SQLite database + schema (idempotent)
 uv run python -m job_agent db init          # or: job-agent db init
 
-# Fetch + store raw listings from Adzuna
-job-agent fetch                              # default query set (your roles, Bay Area + remote)
-job-agent fetch --what "director strategy" --where "San Francisco" --max 50 --days 30
+# Fetch + store roles from your company watchlist (the default), location-filtered
+job-agent fetch
+job-agent fetch --adzuna                     # optional: broad Adzuna keyword search instead
 
 # Parse your resume into a cached profile (re-parses only when it changes)
 job-agent profile
@@ -92,9 +102,48 @@ job-agent feedback --list
 job-agent run
 ```
 
-Digests are written to `./digests/` as timestamped Markdown files. Each run is
-incremental: already-sent roles are skipped, dismissed roles are hidden, and your
-saved/dismissed history is fed into future deep-scoring.
+Digests are written to `./digests/` as timestamped Markdown files, **grouped by
+company** and ranked by fit within each company. Each run is incremental:
+already-sent roles are skipped, dismissed roles are hidden, and your saved/dismissed
+history is fed into future deep-scoring.
+
+---
+
+## Watchlist (companies.yaml)
+
+Your target companies live in `companies.yaml`:
+
+```yaml
+companies:
+  - name: Stripe
+    ats: greenhouse      # greenhouse | lever | ashby | workable | auto
+    slug: stripe         # board token; required UNLESS ats: auto
+  - name: Notion
+    ats: auto            # resolver discovers the board from public ATS URLs
+```
+
+- **Explicit** (`ats` + `slug`) is exact and fast. The `slug` is the token in the
+  board URL: `boards.greenhouse.io/SLUG`, `jobs.lever.co/SLUG`,
+  `jobs.ashbyhq.com/SLUG`, `SLUG.workable.com`.
+- **`ats: auto`** guesses the slug from the name and probes the public Greenhouse /
+  Lever / Ashby / Workable endpoints; the first board that actually responds wins.
+- **Unresolved** companies (auto with no match) are **reported, never guessed** — the
+  `fetch`/`run` output lists them under `UNRESOLVED` so you can add the right
+  `ats` + `slug` manually. The agent never fabricates a feed or a listing.
+
+Each board is fetched, normalized into the standard schema, **location-filtered**, and
+deduped/seen-tracked exactly like every other source.
+
+### Tuning the location filter
+
+A role is **kept** if it's in the Bay Area **or** remote-inclusive of the US/CA, and
+**dropped** only when clearly elsewhere-only; genuinely ambiguous locations are kept
+with `remote = null` (never guessed). All the place lists are in **one spot** —
+`job_agent/config.py`, the `# Watchlist location filter (TUNE HERE)` block
+(`BAY_AREA_TERMS`, `REMOTE_TERMS`, `US_TERMS`, `NON_US_TERMS`, `US_NON_BAY_TERMS`, …).
+Add or remove cities/terms there to widen or tighten the net.
+
+> Tip: if your watchlist is private, add `companies.yaml` to `.gitignore`.
 
 ---
 
@@ -115,26 +164,35 @@ incremental, so a daily cron only ever scores/notifies genuinely new roles.
 
 ```
 job_agent/
-  config.py         paths, secrets, model names, search defaults
+  config.py         paths, secrets, model names, search + location-filter config
   db.py             SQLite connection + schema init
   schema.sql        DDL: jobs, scores, feedback, notifications, meta
   models.py         Job dataclass (+ dedup fingerprint)
   store.py          job upsert/dedup, scoring writes, seen-state, feedback
-  queries.py        default search query set (your roles × Bay Area/Remote)
+  companies.py      companies.yaml loader (watchlist schema)
+  queries.py        Adzuna default query set (optional --adzuna source)
+  textutil.py       HTML->text + epoch->ISO helpers
   sources/
     base.py         JobSource interface + JobQuery (extension point)
-    adzuna.py       AdzunaSource
+    ats.py          public ATS HTTP layer (endpoints, raw fetch, probe)
+    resolver.py     ats=auto board resolver + unresolved reporting
+    ats_sources.py  Greenhouse / Lever / Ashby / Workable sources
+    location.py     Bay-Area / US-remote location filter
+    watchlist.py    WatchlistSource orchestration (default source)
+    adzuna.py       AdzunaSource (optional, behind --adzuna)
   reasoning/
     llm.py          single grounded, tool-free seam to claude-agent-sdk
     profile.py      resume -> cached structured profile
     scoring.py      triage (haiku) + deep score (sonnet/opus)
-  digest.py         ranked Markdown digest + seen-state
+  digest.py         company-grouped Markdown digest + seen-state
   cli.py            command-line entrypoint
 ```
 
 ---
 
 ## Status / roadmap
+
+### Original build (broad Adzuna keyword search) — complete & live-verified
 
 - [x] **1. Scaffold** — project, env, SQLite schema, CLI surface
 - [x] **2. Data layer + AdzunaSource** — `fetch` stores real listings (live-verified against Adzuna)
@@ -144,13 +202,21 @@ job_agent/
 - [x] **6. Dedup + seen-state** — fingerprint dedup + never re-notify (verified: collapses duplicate listings)
 - [x] **7. Feedback capture wired into scoring** — `feedback` upserts saved/dismissed; dismissed hidden, history fed into the deep prompt
 
-The pipeline is **code-complete with 22 offline tests**. The reasoning steps
-(profile, score) need Anthropic API credit to run live — everything else is
-verified end-to-end.
+### Watchlist pivot (current strategy)
 
-**Natural next extensions:** email notifications (SMTP/SES on the digest);
-additional sources (Greenhouse / Lever / Workable ATS feeds, a paid aggregator);
-a small web UI for feedback.
+- [x] **1. companies.yaml** schema + loader + `ats=auto` resolver + unresolved reporting
+- [x] **2. ATS sources** — Greenhouse / Lever / Ashby / Workable behind `JobSource`
+- [x] **3. WatchlistSource** orchestration + tunable location filter
+- [x] **4. Wired as default** — watchlist is the default `fetch`/`run`; Adzuna behind `--adzuna`; digest grouped by company
+- [ ] **5. Live verification** — one real feed per ATS + full pipeline on the real watchlist
+
+The pipeline is **code-complete with 51 offline tests**, all green. The original
+Adzuna build and the reasoning layer are live-verified; watchlist live-verification
+is step 5.
+
+**Deferred to later phases (not built yet):** resume tailoring, cover letters,
+application status tracking, inbox monitoring. **Near-term extensions:** email
+delivery of the digest; a paid aggregator source; a small web UI for feedback.
 
 ---
 
@@ -159,7 +225,10 @@ a small web UI for feedback.
 - **`Credit balance is too low`** during `profile`/`score`/`run` → add credit at
   https://console.anthropic.com/settings/billing. The key/transport are fine; the
   account just has no balance.
-- **`Adzuna credentials missing`** → fill `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` in `.env`.
+- **A company shows `UNRESOLVED`** → auto-resolution found no public board. Set `ats`
+  + `slug` explicitly in `companies.yaml` (slug = the token in the board URL).
+- **`Adzuna credentials missing`** → only affects `--adzuna`; fill `ADZUNA_APP_ID` /
+  `ADZUNA_APP_KEY` in `.env`.
 - **Cost control** → triage uses cheap haiku and only un-triaged jobs; deep scoring
   only runs on triage survivors, batched. Use `--max`/`--days` on `fetch` to bound
   volume and `--min-score` on `digest` to tighten the bar.
