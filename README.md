@@ -208,11 +208,12 @@ job_agent/
 - [x] **2. ATS sources** — Greenhouse / Lever / Ashby / Workable behind `JobSource`
 - [x] **3. WatchlistSource** orchestration + tunable location filter
 - [x] **4. Wired as default** — watchlist is the default `fetch`/`run`; Adzuna behind `--adzuna`; digest grouped by company
-- [ ] **5. Live verification** — one real feed per ATS + full pipeline on the real watchlist
+- [x] **5. Live verification** — Greenhouse (Stripe, Databricks), Ashby (Notion, Ramp), Lever (Mistral) return real postings; full pipeline ran live (732 in-scope → triage → deep-score → company-grouped digest)
 
-The pipeline is **code-complete with 51 offline tests**, all green. The original
-Adzuna build and the reasoning layer are live-verified; watchlist live-verification
-is step 5.
+The pipeline is **code-complete with 53 offline tests**, all green, and
+**live-verified end-to-end**. Workable is implemented + fixture-tested but not
+live-verified (no public board with open roles found among candidates; its
+endpoint never 404s, so auto-resolution only trusts it when it returns >0 roles).
 
 **Deferred to later phases (not built yet):** resume tailoring, cover letters,
 application status tracking, inbox monitoring. **Near-term extensions:** email
