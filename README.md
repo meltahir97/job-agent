@@ -81,8 +81,9 @@ job-agent score
 job-agent score --opus
 
 # Write a ranked Markdown digest to ./digests/
-job-agent digest                             # default: fit >= 60
+job-agent digest                             # default: fit >= 60, only NEW roles
 job-agent digest --min-score 75 --limit 25
+job-agent digest --all                       # re-include roles already sent
 
 # Mark a job saved/dismissed (feeds scoring)  (milestone 7)
 job-agent feedback <job_id> --saved|--dismissed
@@ -132,7 +133,7 @@ job_agent/
 - [x] **3. Resume → cached profile** — pypdf extract + cached JSON, rebuilt only on file change/`--force` _(live LLM call pending API credits)_
 - [x] **4. Triage + deep-scoring → DB** — haiku triage then sonnet/opus deep-score; batched, incremental, grounded _(live calls pending API credits)_
 - [x] **5. Markdown digest** — ranked Matches/Stretch with rationale, red flags, salary, links (verified on real listings)
-- [ ] **6. Dedup + seen-state (incremental reruns)**
+- [x] **6. Dedup + seen-state** — fingerprint dedup + never re-notify (verified: collapses duplicate listings)
 - [ ] **7. Feedback capture wired into scoring**
 
 **Natural next extensions:** email notifications; additional sources (Greenhouse /

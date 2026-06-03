@@ -128,3 +128,16 @@ def feedback_examples(conn: sqlite3.Connection, limit: int = 20):
         "JOIN jobs j ON j.id=f.job_id ORDER BY f.updated_at DESC LIMIT ?",
         (limit,),
     ).fetchall()
+
+
+# --- seen-state for notifications (incremental reruns) ----------------------
+
+def mark_fingerprint_notified(conn: sqlite3.Connection, fingerprint: str, digest_path: str) -> None:
+    """Mark every job sharing this fingerprint as notified, so neither the role
+    nor its duplicates are ever sent again."""
+    conn.execute(
+        "INSERT OR IGNORE INTO notifications (job_id, digest_path, notified_at) "
+        "SELECT id, ?, ? FROM jobs WHERE fingerprint = ?",
+        (digest_path, now_iso(), fingerprint),
+    )
+    conn.commit()

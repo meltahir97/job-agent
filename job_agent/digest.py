@@ -15,11 +15,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from . import config
+from . import config, store
 
 # Latest deep score per job, joined with feedback so dismissed roles drop out.
 _SELECT = """
-SELECT j.id, j.title, j.company, j.location, j.remote,
+SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.remote,
        j.salary_min, j.salary_max, j.salary_currency, j.posted_at, j.url,
        s.fit_score, s.label, s.rationale, s.red_flags, s.model
 FROM jobs j
@@ -34,7 +34,6 @@ WHERE s.label != 'skip'
   AND (f.decision IS NULL OR f.decision != 'dismissed')
   {notif_clause}
 ORDER BY s.fit_score DESC, j.first_seen_at DESC
-{limit_clause}
 """
 
 
@@ -42,14 +41,23 @@ def select_for_digest(
     conn: sqlite3.Connection,
     *,
     min_score: int = 60,
-    only_unnotified: bool = False,
+    only_unnotified: bool = True,
     limit: Optional[int] = None,
 ) -> List[sqlite3.Row]:
+    """Qualifying rows, deduped by fingerprint (highest score wins per role)."""
     notif = "AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.job_id = j.id)" if only_unnotified else ""
-    limit_clause = "LIMIT :limit" if limit else ""
-    sql = _SELECT.format(notif_clause=notif, limit_clause=limit_clause)
-    params = {"min_score": min_score, "limit": limit}
-    return conn.execute(sql, params).fetchall()
+    sql = _SELECT.format(notif_clause=notif)
+    rows = conn.execute(sql, {"min_score": min_score}).fetchall()
+    seen, out = set(), []
+    for r in rows:  # rows are score-desc, so the first per fingerprint is the best
+        fp = r["fingerprint"]
+        if fp in seen:
+            continue
+        seen.add(fp)
+        out.append(r)
+        if limit and len(out) >= limit:
+            break
+    return out
 
 
 def _money(v) -> Optional[str]:
@@ -141,11 +149,15 @@ def write_digest(
     conn: sqlite3.Connection,
     *,
     min_score: int = 60,
-    only_unnotified: bool = False,
+    only_unnotified: bool = True,
     limit: Optional[int] = None,
     generated_at: Optional[datetime] = None,
 ) -> Tuple[Optional[Path], int, List[sqlite3.Row]]:
-    """Render and write a digest. Returns (path|None, count, rows). Writes nothing if empty."""
+    """Render and write a digest, then record seen-state. Returns (path|None, count, rows).
+
+    Writes nothing if there is nothing new. After writing, every included role and
+    its fingerprint duplicates are marked notified so reruns never re-notify.
+    """
     rows = select_for_digest(conn, min_score=min_score, only_unnotified=only_unnotified, limit=limit)
     if not rows:
         return None, 0, []
@@ -153,4 +165,6 @@ def write_digest(
     config.DIGEST_DIR.mkdir(parents=True, exist_ok=True)
     path = config.DIGEST_DIR / f"digest-{generated_at:%Y-%m-%d-%H%M}.md"
     path.write_text(render_markdown(rows, generated_at=generated_at), encoding="utf-8")
+    for r in rows:
+        store.mark_fingerprint_notified(conn, r["fingerprint"], str(path))
     return path, len(rows), rows

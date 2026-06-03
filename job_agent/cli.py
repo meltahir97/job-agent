@@ -122,11 +122,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     print("== digest ==")
     from . import digest as digest_mod
 
-    path, count, _ = digest_mod.write_digest(conn, min_score=args.min_score, limit=args.limit)
+    path, count, _ = digest_mod.write_digest(
+        conn, min_score=args.min_score, limit=args.limit, only_unnotified=not args.all
+    )
     if count:
-        print(f"   wrote {count} role(s) -> {path}")
+        print(f"   wrote {count} new role(s) -> {path}")
     else:
-        print("   no qualifying roles to write yet.")
+        print("   no new qualifying roles to write.")
     conn.close()
     return 0
 
@@ -191,10 +193,12 @@ def cmd_digest(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
     db.init_db(conn)
-    path, count, _ = digest_mod.write_digest(conn, min_score=args.min_score, limit=args.limit)
+    path, count, _ = digest_mod.write_digest(
+        conn, min_score=args.min_score, limit=args.limit, only_unnotified=not args.all
+    )
     conn.close()
     if count == 0:
-        print("No qualifying roles to write yet — run `score` first.")
+        print("No new qualifying roles to write (use --all to re-include sent roles, or run `score`).")
         return 0
     print(f"Wrote {count} role(s) -> {path}")
     return 0
@@ -218,6 +222,7 @@ def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
 def _add_digest_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--min-score", type=int, default=60, help="minimum fit score to include (default 60)")
     p.add_argument("--limit", type=int, default=None, help="max roles to include")
+    p.add_argument("--all", action="store_true", help="include roles already sent in a previous digest")
 
 
 def build_parser() -> argparse.ArgumentParser:
