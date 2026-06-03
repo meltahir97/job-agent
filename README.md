@@ -68,8 +68,9 @@ Secrets live in `.env` only and `.env` is git-ignored.
 # Initialize the SQLite database + schema (idempotent)
 uv run python -m job_agent db init          # or: job-agent db init
 
-# Fetch + store raw listings                 (milestone 2)
-job-agent fetch
+# Fetch + store raw listings from Adzuna
+job-agent fetch                              # default query set (your roles, Bay Area + remote)
+job-agent fetch --what "director strategy" --where "San Francisco" --max 50 --days 30
 
 # Parse your resume into a cached profile     (milestone 3)
 job-agent profile
@@ -124,7 +125,7 @@ job_agent/
 ## Status / roadmap
 
 - [x] **1. Scaffold** — project, env, SQLite schema, CLI surface
-- [ ] **2. Data layer + AdzunaSource** — `fetch` stores real listings
+- [x] **2. Data layer + AdzunaSource** — `fetch` stores real listings _(offline-tested; live API run pending your Adzuna keys)_
 - [ ] **3. Resume → cached profile**
 - [ ] **4. Triage + deep-scoring → DB**
 - [ ] **5. Markdown digest**

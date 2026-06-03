@@ -1,15 +1,16 @@
 """Command-line entrypoint.
 
-Milestone 1 wires up the command surface and a working `db init`. The remaining
-subcommands are intentional stubs filled in by later milestones, so the end-to-end
-shape is visible from the start.
+Top-level imports stay dependency-free so `db init` works on a bare interpreter;
+anything needing third-party packages (requests/Adzuna) is imported lazily inside
+the command that uses it.
 """
 from __future__ import annotations
 
 import argparse
 import sys
 
-from . import config, db
+from . import config, db, queries, store
+from .sources.base import JobQuery
 
 
 def cmd_db_init(args: argparse.Namespace) -> int:
@@ -29,12 +30,98 @@ def cmd_db_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_fetch(conn, qs) -> tuple:
+    """Fetch each query via Adzuna and upsert. Returns (processed, new)."""
+    import requests  # lazy: keeps `db init` dependency-free
+
+    from .sources.adzuna import AdzunaConfigError, AdzunaSource
+
+    try:
+        src = AdzunaSource(config.ADZUNA_APP_ID, config.ADZUNA_APP_KEY, country=config.COUNTRY)
+    except AdzunaConfigError as e:
+        print(f"error: {e}")
+        print("Add ADZUNA_APP_ID and ADZUNA_APP_KEY to .env (see .env.example).")
+        return None  # signal config failure
+
+    processed = new = 0
+    for q in qs:
+        label = q.location or ("remote" if q.remote else "any")
+        try:
+            jobs = src.fetch(q)
+        except requests.HTTPError as e:
+            print(f"  ! HTTP error for {q.keywords!r} @ {label}: {e}")
+            continue
+        except requests.RequestException as e:
+            print(f"  ! network error for {q.keywords!r} @ {label}: {e}")
+            continue
+        n_new = 0
+        for job in jobs:
+            _, is_new = store.upsert_job(conn, job)
+            n_new += int(is_new)
+        processed += len(jobs)
+        new += n_new
+        print(f"  {q.keywords!r} @ {label}: {len(jobs)} fetched, {n_new} new")
+    return processed, new
+
+
+def cmd_fetch(args: argparse.Namespace) -> int:
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+
+    if args.what:
+        qs = [
+            JobQuery(
+                keywords=args.what,
+                location=args.where,
+                max_results=args.max,
+                max_days_old=args.days,
+            )
+        ]
+    else:
+        qs = queries.default_queries(max_results=args.max, max_days_old=args.days)
+
+    result = _run_fetch(conn, qs)
+    if result is None:
+        conn.close()
+        return 2
+    processed, new = result
+    print(f"Done: {processed} listings processed, {new} new, {store.count_jobs(conn)} total in DB.")
+    conn.close()
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Full pipeline. Currently: fetch (later milestones add score -> digest -> feedback)."""
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    print("== fetch ==")
+    result = _run_fetch(conn, queries.default_queries(max_results=args.max, max_days_old=args.days))
+    if result is None:
+        conn.close()
+        return 2
+    processed, new = result
+    print(f"   {processed} processed, {new} new, {store.count_jobs(conn)} total in DB.")
+    print("== score ==   [pending — milestone 4]")
+    print("== digest ==  [pending — milestone 5]")
+    conn.close()
+    return 0
+
+
 def _todo(milestone: int):
     def run(args: argparse.Namespace) -> int:
         print(f"[not implemented yet — milestone {milestone}]")
         return 1
 
     return run
+
+
+def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--what", help="ad-hoc keyword search (overrides default query set)")
+    p.add_argument("--where", help="location for the ad-hoc search, e.g. 'San Francisco'")
+    p.add_argument("--max", type=int, default=50, help="max results per query (default 50)")
+    p.add_argument("--days", type=int, default=30, help="max age in days (default 30)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -46,12 +133,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     db_p = sub.add_parser("db", help="Database admin")
     db_sub = db_p.add_subparsers(dest="subcommand", required=True)
-    db_init = db_sub.add_parser("init", help="Create the SQLite database + schema")
-    db_init.set_defaults(func=cmd_db_init)
-
-    sub.add_parser("fetch", help="Fetch + store raw listings (milestone 2)").set_defaults(
-        func=_todo(2)
+    db_sub.add_parser("init", help="Create the SQLite database + schema").set_defaults(
+        func=cmd_db_init
     )
+
+    f = sub.add_parser("fetch", help="Fetch + store raw listings from Adzuna")
+    _add_fetch_flags(f)
+    f.set_defaults(func=cmd_fetch)
+
     sub.add_parser("profile", help="Parse resume -> profile JSON (milestone 3)").set_defaults(
         func=_todo(3)
     )
@@ -64,7 +153,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("feedback", help="Mark a job saved/dismissed (milestone 7)").set_defaults(
         func=_todo(7)
     )
-    sub.add_parser("run", help="Run the full pipeline end-to-end").set_defaults(func=_todo(2))
+
+    r = sub.add_parser("run", help="Run the full pipeline end-to-end")
+    _add_fetch_flags(r)
+    r.set_defaults(func=cmd_run)
 
     return p
 
