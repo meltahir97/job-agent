@@ -141,3 +141,27 @@ def mark_fingerprint_notified(conn: sqlite3.Connection, fingerprint: str, digest
         (digest_path, now_iso(), fingerprint),
     )
     conn.commit()
+
+
+# --- feedback (saved/dismissed -> future scoring) ---------------------------
+
+def get_job(conn: sqlite3.Connection, job_id: int):
+    return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+
+
+def record_feedback(conn: sqlite3.Connection, job_id: int, decision: str, note: Optional[str] = None) -> None:
+    """Upsert the candidate's current decision ('saved' | 'dismissed') for a job."""
+    now = now_iso()
+    conn.execute(
+        "INSERT INTO feedback (job_id, decision, note, created_at, updated_at) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(job_id) DO UPDATE SET decision=excluded.decision, note=excluded.note, updated_at=excluded.updated_at",
+        (job_id, decision, note, now, now),
+    )
+    conn.commit()
+
+
+def list_feedback(conn: sqlite3.Connection):
+    return conn.execute(
+        "SELECT f.job_id, f.decision, f.note, j.title, j.company FROM feedback f "
+        "JOIN jobs j ON j.id=f.job_id ORDER BY f.updated_at DESC"
+    ).fetchall()

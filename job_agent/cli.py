@@ -204,12 +204,34 @@ def cmd_digest(args: argparse.Namespace) -> int:
     return 0
 
 
-def _todo(milestone: int):
-    def run(args: argparse.Namespace) -> int:
-        print(f"[not implemented yet — milestone {milestone}]")
-        return 1
-
-    return run
+def cmd_feedback(args: argparse.Namespace) -> int:
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    if args.list:
+        rows = store.list_feedback(conn)
+        if not rows:
+            print("No feedback recorded yet.")
+        for r in rows:
+            note = f"  ({r['note']})" if r["note"] else ""
+            print(f"  [{r['job_id']}] {r['decision']:9} {r['title']} @ {r['company']}{note}")
+        conn.close()
+        return 0
+    if args.job_id is None or not (args.saved or args.dismissed):
+        print("usage: job-agent feedback <job_id> --saved|--dismissed [--note ...]   (or --list)")
+        conn.close()
+        return 2
+    job = store.get_job(conn, args.job_id)
+    if not job:
+        print(f"error: no job with id {args.job_id} (ids are shown in the digest)")
+        conn.close()
+        return 2
+    decision = "saved" if args.saved else "dismissed"
+    store.record_feedback(conn, args.job_id, decision, args.note)
+    conn.close()
+    print(f"Recorded {decision}: [{args.job_id}] {job['title']} @ {job['company']}")
+    print("This now informs future deep-scoring runs.")
+    return 0
 
 
 def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
@@ -251,9 +273,14 @@ def build_parser() -> argparse.ArgumentParser:
     dg = sub.add_parser("digest", help="Write a ranked Markdown digest to ./digests")
     _add_digest_flags(dg)
     dg.set_defaults(func=cmd_digest)
-    sub.add_parser("feedback", help="Mark a job saved/dismissed (milestone 7)").set_defaults(
-        func=_todo(7)
-    )
+    fb = sub.add_parser("feedback", help="Mark a job saved/dismissed (tunes future scoring)")
+    fb.add_argument("job_id", nargs="?", type=int, help="job id (shown in the digest)")
+    grp = fb.add_mutually_exclusive_group()
+    grp.add_argument("--saved", action="store_true", help="you're interested")
+    grp.add_argument("--dismissed", action="store_true", help="not interested")
+    fb.add_argument("--note", help="optional note")
+    fb.add_argument("--list", action="store_true", help="list recorded feedback")
+    fb.set_defaults(func=cmd_feedback)
 
     r = sub.add_parser("run", help="Run the full pipeline end-to-end")
     _add_fetch_flags(r)

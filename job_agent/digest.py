@@ -105,6 +105,7 @@ def _render_row(row: sqlite3.Row, idx: int) -> str:
         meta.append(sal)
     if row["posted_at"]:
         meta.append(f"posted {str(row['posted_at'])[:10]}")
+    meta.append(f"id {row['id']}")
     meta_line = "  ·  ".join(meta)
 
     lines = [
@@ -131,6 +132,8 @@ def render_markdown(rows: List[sqlite3.Row], *, generated_at: Optional[datetime]
         f"# Job digest — {generated_at:%Y-%m-%d}",
         "",
         f"_{len(rows)} role(s) · ranked by fit · generated {generated_at:%Y-%m-%d %H:%M} by job-agent_",
+        "",
+        "_Tune future runs: `job-agent feedback <id> --saved` / `--dismissed`._",
     ]
     if matches:
         out += ["", f"## ⭐ Matches ({len(matches)})", ""]
