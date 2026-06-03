@@ -36,6 +36,7 @@ DIGEST_DIR = BASE_DIR / "digests"
 PROFILE_DIR = BASE_DIR / "profile"
 PROFILE_PATH = PROFILE_DIR / "profile.json"
 RESUME_PATH = Path(os.environ.get("RESUME_PATH") or (BASE_DIR / "resume" / "resume.pdf"))
+COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH") or (BASE_DIR / "companies.yaml"))
 
 # --- Secrets (from .env / environment) ---
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")

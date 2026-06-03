@@ -8,6 +8,7 @@ dependencies = [
     "claude-agent-sdk>=0.2.0",  # reasoning layer (needs Python 3.10+)
     "requests>=2.31",            # data layer HTTP
     "pypdf>=4.0",                # one-time resume text extraction
+    "pyyaml>=6.0",               # companies.yaml watchlist
 ]
 
 [project.scripts]

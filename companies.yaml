@@ -1,0 +1,38 @@
+# companies.yaml — your watchlist of target companies.
+#
+# The agent polls each company's public ATS job board and surfaces NEW roles you'd
+# be qualified for that are Bay Area in-office or US/SF-remote (scored against your
+# resume profile). Replace the examples below with YOUR target companies.
+#
+# Each entry:
+#   name: <display name>                       # required
+#   ats:  greenhouse | lever | ashby | workable | auto   # default: auto
+#   slug: <board token>                        # required UNLESS ats: auto
+#
+# - ats: auto  -> the resolver guesses the slug from the name and probes the public
+#                 ATS endpoints; if nothing matches it's reported as UNRESOLVED
+#                 (never guessed). Supply ats+slug manually to fix those.
+# - Explicit is faster and exact. The slug is the token in the board URL, e.g.
+#   boards.greenhouse.io/SLUG, jobs.lever.co/SLUG, jobs.ashbyhq.com/SLUG,
+#   SLUG.workable.com.
+#
+# Tip: if you consider your watchlist private, add `companies.yaml` to .gitignore.
+
+companies:
+  # --- auto-resolved examples (replace with your real targets) ---
+  - name: Stripe
+    ats: auto
+  - name: Notion
+    ats: auto
+  - name: Ramp
+    ats: auto
+  - name: Databricks
+    ats: auto
+
+  # --- explicit form examples (ats + slug given) ---
+  # - name: Figma
+  #   ats: greenhouse
+  #   slug: figma
+  # - name: Ramp
+  #   ats: ashby
+  #   slug: ramp
