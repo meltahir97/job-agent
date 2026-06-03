@@ -1,7 +1,10 @@
 """Offline tests for milestone 6: fingerprint dedup + seen-state (no re-notify)."""
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
-from job_agent import db, digest, store
+from job_agent import config, db, digest, store
 from job_agent.models import Job
 
 
@@ -13,8 +16,13 @@ class TestSeenState(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
         db.init_db(self.conn)
+        self._tmp = tempfile.TemporaryDirectory()
+        self._patch = mock.patch.object(config, "DIGEST_DIR", Path(self._tmp.name))
+        self._patch.start()
 
     def tearDown(self):
+        self._patch.stop()
+        self._tmp.cleanup()
         self.conn.close()
 
     def _score(self, job_id, score, label):
