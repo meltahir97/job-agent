@@ -119,7 +119,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     except (LLMError, FileNotFoundError) as e:
         print(f"   skipped scoring: {e}")
 
-    print("== digest ==  [pending — milestone 5]")
+    print("== digest ==")
+    from . import digest as digest_mod
+
+    path, count, _ = digest_mod.write_digest(conn, min_score=args.min_score, limit=args.limit)
+    if count:
+        print(f"   wrote {count} role(s) -> {path}")
+    else:
+        print("   no qualifying roles to write yet.")
     conn.close()
     return 0
 
@@ -178,6 +185,21 @@ def cmd_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_digest(args: argparse.Namespace) -> int:
+    from . import digest as digest_mod
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    path, count, _ = digest_mod.write_digest(conn, min_score=args.min_score, limit=args.limit)
+    conn.close()
+    if count == 0:
+        print("No qualifying roles to write yet — run `score` first.")
+        return 0
+    print(f"Wrote {count} role(s) -> {path}")
+    return 0
+
+
 def _todo(milestone: int):
     def run(args: argparse.Namespace) -> int:
         print(f"[not implemented yet — milestone {milestone}]")
@@ -191,6 +213,11 @@ def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
     p.add_argument("--where", help="location for the ad-hoc search, e.g. 'San Francisco'")
     p.add_argument("--max", type=int, default=50, help="max results per query (default 50)")
     p.add_argument("--days", type=int, default=30, help="max age in days (default 30)")
+
+
+def _add_digest_flags(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--min-score", type=int, default=60, help="minimum fit score to include (default 60)")
+    p.add_argument("--limit", type=int, default=None, help="max roles to include")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -216,15 +243,16 @@ def build_parser() -> argparse.ArgumentParser:
     sc = sub.add_parser("score", help="Triage (haiku) + deep-score (sonnet) new jobs")
     sc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
     sc.set_defaults(func=cmd_score)
-    sub.add_parser("digest", help="Write ranked Markdown digest (milestone 5)").set_defaults(
-        func=_todo(5)
-    )
+    dg = sub.add_parser("digest", help="Write a ranked Markdown digest to ./digests")
+    _add_digest_flags(dg)
+    dg.set_defaults(func=cmd_digest)
     sub.add_parser("feedback", help="Mark a job saved/dismissed (milestone 7)").set_defaults(
         func=_todo(7)
     )
 
     r = sub.add_parser("run", help="Run the full pipeline end-to-end")
     _add_fetch_flags(r)
+    _add_digest_flags(r)
     r.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
     r.set_defaults(func=cmd_run)
 

@@ -80,8 +80,9 @@ job-agent profile --force                    # force re-parse
 job-agent score
 job-agent score --opus
 
-# Write a ranked Markdown digest to ./digests (milestone 5)
-job-agent digest
+# Write a ranked Markdown digest to ./digests/
+job-agent digest                             # default: fit >= 60
+job-agent digest --min-score 75 --limit 25
 
 # Mark a job saved/dismissed (feeds scoring)  (milestone 7)
 job-agent feedback <job_id> --saved|--dismissed
@@ -130,7 +131,7 @@ job_agent/
 - [x] **2. Data layer + AdzunaSource** — `fetch` stores real listings _(offline-tested; live API run pending your Adzuna keys)_
 - [x] **3. Resume → cached profile** — pypdf extract + cached JSON, rebuilt only on file change/`--force` _(live LLM call pending API credits)_
 - [x] **4. Triage + deep-scoring → DB** — haiku triage then sonnet/opus deep-score; batched, incremental, grounded _(live calls pending API credits)_
-- [ ] **5. Markdown digest**
+- [x] **5. Markdown digest** — ranked Matches/Stretch with rationale, red flags, salary, links (verified on real listings)
 - [ ] **6. Dedup + seen-state (incremental reruns)**
 - [ ] **7. Feedback capture wired into scoring**
 
