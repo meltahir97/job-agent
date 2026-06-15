@@ -1,22 +1,24 @@
 """The single seam between this app and Claude — via the raw Anthropic Messages API.
 
-Why the raw API (not claude-agent-sdk): the agent SDK spawns a Claude Code CLI
-subprocess per call (~25-30s overhead each), which made a full scoring run take
-~35 minutes. The Messages API has no per-call process overhead and is safe to call
-concurrently, cutting a full run to a couple of minutes.
+Why the raw API (not claude-agent-sdk): the agent SDK spawned a Claude Code CLI
+subprocess per call (~25-30s overhead each), making a full scoring run ~35 minutes.
+The Messages API has no per-call process overhead and is safe to call concurrently.
 
-Grounding is inherent here: we pass NO tools, so the model cannot browse, fetch, or
+Grounding is inherent: we pass NO tools, so the model cannot browse, fetch, or
 invent — it sees only the data we put in the prompt. Calls are single-shot.
 
-Prompt caching: the stable prefix (instructions + candidate profile) is passed as a
-cached `system` block, reused across every batch in a run; only the per-batch jobs
-vary in the user message.
+Concurrency: `map_json` runs batches with an asyncio semaphore (default cap 5) over
+AsyncAnthropic; the SDK auto-retries 429/5xx with backoff (max_retries). An optional
+`batch=True` path uses the Message Batches API (~50% cheaper, latency-tolerant) for
+scheduled runs. Prompt caching: the stable instructions+profile prefix is sent as a
+cached `system` block, reused across every batch.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from typing import Any, List, Optional
 
 from .. import config
@@ -36,8 +38,6 @@ def _get_client():
 
         if not config.ANTHROPIC_API_KEY:
             raise LLMError("ANTHROPIC_API_KEY not set (add it to .env).")
-        # Explicit key: the harness may export a blank ANTHROPIC_API_KEY that would
-        # otherwise shadow the real one. max_retries covers transient 429/5xx.
         _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=4)
     return _client
 
@@ -77,28 +77,66 @@ def _error_text(e) -> str:
     return msg
 
 
+def _system_blocks(system: str, cache: bool):
+    block = {"type": "text", "text": system}
+    if cache:
+        block["cache_control"] = {"type": "ephemeral"}
+    return [block]
+
+
+def _text_of(message) -> str:
+    return "".join(b.text for b in message.content if getattr(b, "type", None) == "text")
+
+
+# --- single, synchronous call (used by one-off resume profiling) ------------
+
 def complete_text(prompt: str, *, model: str, system: str, max_tokens: int = 4096, cache: bool = True) -> str:
-    """One grounded, tool-free completion. `system` is sent as a cacheable prefix."""
     import anthropic
 
     client = _get_client()
-    system_blocks = [{"type": "text", "text": system}]
-    if cache:
-        system_blocks[0]["cache_control"] = {"type": "ephemeral"}
     try:
         resp = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_blocks,
+            model=model, max_tokens=max_tokens,
+            system=_system_blocks(system, cache),
             messages=[{"role": "user", "content": prompt}],
         )
     except anthropic.APIError as e:
         raise LLMError(_error_text(e)) from e
-    return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    return _text_of(resp)
 
 
 def complete_json(prompt: str, *, model: str, system: str, max_tokens: int = 4096, cache: bool = True) -> Any:
     return parse_json(complete_text(prompt, model=model, system=system, max_tokens=max_tokens, cache=cache))
+
+
+# --- concurrent batch scoring (Messages API, asyncio + semaphore) -----------
+
+async def _amap(prompts, *, model, system, max_tokens, cache, concurrency) -> List[Optional[Any]]:
+    import anthropic
+
+    sblocks = _system_blocks(system, cache)
+    async with anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=4) as client:
+        sem = asyncio.Semaphore(concurrency)
+
+        async def call(prompt: str):
+            async with sem:
+                resp = await client.messages.create(
+                    model=model, max_tokens=max_tokens, system=sblocks,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                return parse_json(_text_of(resp))
+
+        async def safe(prompt: str):
+            try:
+                return await call(prompt)
+            except Exception:
+                return None  # per-batch failure -> caller fails open
+
+        # Warm the shared cache (and surface systemic errors) with the first call,
+        # then fan the rest out across the semaphore.
+        first = await call(prompts[0])
+        rest = await asyncio.gather(*(safe(p) for p in prompts[1:]))
+        return [first, *rest]
 
 
 def map_json(
@@ -107,31 +145,55 @@ def map_json(
     model: str,
     system: str,
     max_tokens: int = 4096,
-    workers: int = 6,
     cache: bool = True,
+    concurrency: int = 5,
+    batch: bool = False,
 ) -> List[Optional[Any]]:
-    """Run many batches that share the same cached `system` prefix, concurrently.
-
-    The first call runs alone to warm the shared cache; the rest fan out across a
-    thread pool (so they read the cached prefix). A per-batch failure yields None
-    (the caller fails open) rather than aborting the whole run; a systemic failure
-    (bad key, no credit) surfaces immediately from the warm-up call.
-    """
     if not prompts:
         return []
+    if not config.ANTHROPIC_API_KEY:
+        raise LLMError("ANTHROPIC_API_KEY not set (add it to .env).")
+    if batch:
+        return _map_json_batch(prompts, model=model, system=system, max_tokens=max_tokens, cache=cache)
 
-    results: List[Optional[Any]] = [None] * len(prompts)
-    results[0] = complete_json(prompts[0], model=model, system=system, max_tokens=max_tokens, cache=cache)
+    import anthropic
 
-    rest = list(range(1, len(prompts)))
-    if rest:
-        def one(i: int):
-            try:
-                return complete_json(prompts[i], model=model, system=system, max_tokens=max_tokens, cache=cache)
-            except LLMError:
-                return None  # transient/per-batch failure → caller handles missing results
+    try:
+        return asyncio.run(_amap(prompts, model=model, system=system, max_tokens=max_tokens, cache=cache, concurrency=concurrency))
+    except anthropic.APIError as e:
+        raise LLMError(_error_text(e)) from e
 
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            for i, res in zip(rest, ex.map(one, rest)):
-                results[i] = res
-    return results
+
+# --- optional Batch API path (~50% cheaper; latency-tolerant) ---------------
+
+def _map_json_batch(prompts, *, model, system, max_tokens, cache, poll_seconds: int = 20) -> List[Optional[Any]]:
+    import anthropic
+    from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
+    from anthropic.types.messages.batch_create_params import Request
+
+    client = _get_client()
+    sblocks = _system_blocks(system, cache)
+    requests = [
+        Request(
+            custom_id=f"b{i}",
+            params=MessageCreateParamsNonStreaming(
+                model=model, max_tokens=max_tokens, system=sblocks,
+                messages=[{"role": "user", "content": p}],
+            ),
+        )
+        for i, p in enumerate(prompts)
+    ]
+    try:
+        batch = client.messages.batches.create(requests=requests)
+        while client.messages.batches.retrieve(batch.id).processing_status != "ended":
+            time.sleep(poll_seconds)
+        out: List[Optional[Any]] = [None] * len(prompts)
+        for result in client.messages.batches.results(batch.id):
+            if result.result.type == "succeeded":
+                try:
+                    out[int(result.custom_id[1:])] = parse_json(_text_of(result.result.message))
+                except (LLMError, ValueError):
+                    pass
+        return out
+    except anthropic.APIError as e:
+        raise LLMError(_error_text(e)) from e

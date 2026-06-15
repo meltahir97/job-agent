@@ -146,7 +146,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     model = config.STRONG_MODEL if getattr(args, "opus", False) else config.DEEP_MODEL
     try:
         prof = profile_mod.load_or_build(conn)
-        stats = scoring.run_scoring(conn, prof, deep_model=model)
+        stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
         print(
             f"   triaged {stats['triaged']} (kept {stats['kept']}); "
             f"deep-scored {stats['deep_scored']} with {model}."
@@ -209,7 +209,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     model = config.STRONG_MODEL if args.opus else config.DEEP_MODEL
     try:
         prof = profile_mod.load_or_build(conn)
-        stats = scoring.run_scoring(conn, prof, deep_model=model)
+        stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
     except (FileNotFoundError, LLMError) as e:
         print(f"error: {e}")
         conn.close()
@@ -308,6 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     pr.set_defaults(func=cmd_profile)
     sc = sub.add_parser("score", help="Triage (haiku) + deep-score (sonnet) new jobs")
     sc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
+    sc.add_argument("--batch", action="store_true", help="use the Batch API (cheaper, latency-tolerant)")
     sc.set_defaults(func=cmd_score)
     dg = sub.add_parser("digest", help="Write a ranked Markdown digest to ./digests")
     _add_digest_flags(dg)
@@ -325,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_fetch_flags(r)
     _add_digest_flags(r)
     r.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
+    r.add_argument("--batch", action="store_true", help="use the Batch API (cheaper, latency-tolerant)")
     r.set_defaults(func=cmd_run)
 
     return p

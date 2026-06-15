@@ -159,11 +159,12 @@ def triage(
     *,
     model: str = config.TRIAGE_MODEL,
     batch_size: int = 25,
+    batch: bool = False,
 ) -> int:
     system = _system_with_profile(TRIAGE_SYSTEM, profile)
     batches = _chunks(rows, batch_size)
     prompts = [_triage_user([_job_payload(r, desc_chars=600) for r in b]) for b in batches]
-    results = llm.map_json(prompts, model=model, system=system, max_tokens=4096)
+    results = llm.map_json(prompts, model=model, system=system, max_tokens=4096, batch=batch)
 
     kept = 0
     for batch, result in zip(batches, results):
@@ -185,11 +186,12 @@ def deep_score(
     model: str = config.DEEP_MODEL,
     batch_size: int = 8,
     feedback: Optional[List[sqlite3.Row]] = None,
+    batch: bool = False,
 ) -> int:
     system = _system_with_profile(DEEP_SYSTEM, profile) + _feedback_block(feedback)
     batches = _chunks(rows, batch_size)
     prompts = [_deep_user([_job_payload(r, desc_chars=2000) for r in b]) for b in batches]
-    results = llm.map_json(prompts, model=model, system=system, max_tokens=8192)
+    results = llm.map_json(prompts, model=model, system=system, max_tokens=8192, batch=batch)
 
     n = 0
     for batch, result in zip(batches, results):
@@ -209,10 +211,10 @@ def deep_score(
     return n
 
 
-def run_scoring(conn: sqlite3.Connection, profile: Dict[str, Any], *, deep_model: str = config.DEEP_MODEL) -> Dict[str, int]:
+def run_scoring(conn: sqlite3.Connection, profile: Dict[str, Any], *, deep_model: str = config.DEEP_MODEL, batch: bool = False) -> Dict[str, int]:
     to_triage = store.jobs_needing_triage(conn)
-    kept = triage(conn, profile, to_triage) if to_triage else 0
+    kept = triage(conn, profile, to_triage, batch=batch) if to_triage else 0
     to_deep = store.jobs_needing_deep(conn)
     feedback = store.feedback_examples(conn)
-    deep = deep_score(conn, profile, to_deep, model=deep_model, feedback=feedback) if to_deep else 0
+    deep = deep_score(conn, profile, to_deep, model=deep_model, feedback=feedback, batch=batch) if to_deep else 0
     return {"triaged": len(to_triage), "kept": kept, "deep_scored": deep}
