@@ -40,7 +40,7 @@ ORDER BY s.fit_score DESC, j.first_seen_at DESC
 def select_for_digest(
     conn: sqlite3.Connection,
     *,
-    min_score: int = 60,
+    min_score: int = 0,
     only_unnotified: bool = True,
     limit: Optional[int] = None,
 ) -> List[sqlite3.Row]:
@@ -111,7 +111,8 @@ def _render_row(row: sqlite3.Row) -> str:
         meta.append(f"posted {str(row['posted_at'])[:10]}")
     meta.append(f"id {row['id']}")
 
-    lines = [f"### {row['title'] or 'Untitled role'}  ·  **{row['fit_score']}/100**  ·  {badge}"]
+    score = f"{row['fit_score']}/100" if row["fit_score"] is not None else "unscored"
+    lines = [f"### {row['title'] or 'Untitled role'}  ·  **{score}**  ·  {badge}"]
     lines.append("  ·  ".join(meta))
     if row["rationale"]:
         lines.append(f"\n**Why:** {row['rationale']}")
@@ -157,7 +158,7 @@ def row_company(row: sqlite3.Row) -> str:
 def write_digest(
     conn: sqlite3.Connection,
     *,
-    min_score: int = 60,
+    min_score: int = 0,
     only_unnotified: bool = True,
     limit: Optional[int] = None,
     generated_at: Optional[datetime] = None,

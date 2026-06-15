@@ -281,7 +281,7 @@ def _add_fetch_flags(p: argparse.ArgumentParser) -> None:
 
 
 def _add_digest_flags(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--min-score", type=int, default=60, help="minimum fit score to include (default 60)")
+    p.add_argument("--min-score", type=int, default=0, help="minimum fit score to include (default 0 = all non-skip)")
     p.add_argument("--limit", type=int, default=None, help="max roles to include")
     p.add_argument("--all", action="store_true", help="include roles already sent in a previous digest")
 

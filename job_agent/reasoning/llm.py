@@ -1,26 +1,45 @@
-"""The single seam between this app and claude-agent-sdk.
+"""The single seam between this app and Claude — via the raw Anthropic Messages API.
 
-Every model call in the project goes through here, configured for grounding:
-  * allowed_tools=[] and explicit disallowed web/file tools -> the model cannot
-    browse, fetch, or read anything. It sees only the text we put in the prompt.
-  * setting_sources=[] -> no filesystem settings / CLAUDE.md leak into context.
-  * max_turns=1 -> a single response, no agentic loops.
+Why the raw API (not claude-agent-sdk): the agent SDK spawns a Claude Code CLI
+subprocess per call (~25-30s overhead each), which made a full scoring run take
+~35 minutes. The Messages API has no per-call process overhead and is safe to call
+concurrently, cutting a full run to a couple of minutes.
 
-Centralizing this also makes the reasoning layer trivially mockable in tests.
+Grounding is inherent here: we pass NO tools, so the model cannot browse, fetch, or
+invent — it sees only the data we put in the prompt. Calls are single-shot.
+
+Prompt caching: the stable prefix (instructions + candidate profile) is passed as a
+cached `system` block, reused across every batch in a run; only the per-batch jobs
+vary in the user message.
 """
 from __future__ import annotations
 
-import functools
 import json
-import os
 import re
-from typing import Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, List, Optional
 
 from .. import config
 
 
 class LLMError(RuntimeError):
     pass
+
+
+_client = None
+
+
+def _get_client():
+    global _client
+    if _client is None:
+        import anthropic
+
+        if not config.ANTHROPIC_API_KEY:
+            raise LLMError("ANTHROPIC_API_KEY not set (add it to .env).")
+        # Explicit key: the harness may export a blank ANTHROPIC_API_KEY that would
+        # otherwise shadow the real one. max_retries covers transient 429/5xx.
+        _client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=4)
+    return _client
 
 
 def _strip_fences(s: str) -> str:
@@ -50,83 +69,69 @@ def parse_json(text: str) -> Any:
     raise LLMError(f"Model did not return valid JSON. First 200 chars: {text[:200]!r}")
 
 
-def _error_from_result(rm) -> Optional[str]:
-    """Build a human-readable error from a ResultMessage (the SDK's own exception
-    is cryptic — it reports subtype 'success' even for billing/API errors)."""
-    if rm is None:
-        return None
-    parts = []
-    if getattr(rm, "result", None):
-        parts.append(str(rm.result))
-    if getattr(rm, "errors", None):
-        parts.append("; ".join(str(e) for e in rm.errors))
-    if getattr(rm, "api_error_status", None):
-        parts.append(f"(HTTP {rm.api_error_status})")
-    if not parts:
-        return None
-    msg = " ".join(parts)
+def _error_text(e) -> str:
+    msg = getattr(e, "message", None) or str(e)
     low = msg.lower()
     if "credit" in low or "balance" in low:
         msg += " — add credit at https://console.anthropic.com/settings/billing"
     return msg
 
 
-async def _aquery(prompt: str, *, model: str, system: str, max_budget_usd: Optional[float]) -> str:
-    from claude_agent_sdk import (
-        AssistantMessage,
-        ClaudeAgentOptions,
-        ResultMessage,
-        TextBlock,
-        query,
-    )
+def complete_text(prompt: str, *, model: str, system: str, max_tokens: int = 4096, cache: bool = True) -> str:
+    """One grounded, tool-free completion. `system` is sent as a cacheable prefix."""
+    import anthropic
 
-    opts = ClaudeAgentOptions(
-        model=model,
-        system_prompt=system,
-        allowed_tools=[],  # grounding: no tools at all
-        disallowed_tools=["WebSearch", "WebFetch", "Bash", "Read", "Edit", "Write"],
-        max_turns=1,
-        setting_sources=[],  # hermetic: ignore project/user settings
-        max_budget_usd=max_budget_usd,
-    )
-    chunks: list[str] = []
-    result_msg = None
+    client = _get_client()
+    system_blocks = [{"type": "text", "text": system}]
+    if cache:
+        system_blocks[0]["cache_control"] = {"type": "ephemeral"}
     try:
-        async for msg in query(prompt=prompt, options=opts):
-            if isinstance(msg, AssistantMessage):
-                for block in msg.content:
-                    if isinstance(block, TextBlock):
-                        chunks.append(block.text)
-            elif isinstance(msg, ResultMessage):
-                result_msg = msg
-    except Exception as e:
-        # Prefer the CLI's own human-readable result text over its cryptic exception.
-        raise LLMError(_error_from_result(result_msg) or str(e)) from e
-    if result_msg is not None and getattr(result_msg, "is_error", False):
-        raise LLMError(_error_from_result(result_msg) or "model returned an error result")
-    return "".join(chunks)
-
-
-def complete_text(prompt: str, *, model: str, system: str, max_budget_usd: Optional[float] = None) -> str:
-    """Run a single grounded, tool-free completion and return the raw text."""
-    import anyio
-
-    if not config.ANTHROPIC_API_KEY:
-        raise LLMError("ANTHROPIC_API_KEY not set (add it to .env).")
-    # Ensure the key reaches the CLI subprocess even if the ambient var was blank.
-    os.environ["ANTHROPIC_API_KEY"] = config.ANTHROPIC_API_KEY
-    try:
-        return anyio.run(
-            functools.partial(
-                _aquery, prompt, model=model, system=system, max_budget_usd=max_budget_usd
-            )
+        resp = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_blocks,
+            messages=[{"role": "user", "content": prompt}],
         )
-    except LLMError:
-        raise
-    except Exception as e:  # surface SDK/transport/billing errors cleanly
-        raise LLMError(str(e)) from e
+    except anthropic.APIError as e:
+        raise LLMError(_error_text(e)) from e
+    return "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
 
 
-def complete_json(prompt: str, *, model: str, system: str, max_budget_usd: Optional[float] = None) -> Any:
-    """Run a completion and parse its output as JSON (object or array)."""
-    return parse_json(complete_text(prompt, model=model, system=system, max_budget_usd=max_budget_usd))
+def complete_json(prompt: str, *, model: str, system: str, max_tokens: int = 4096, cache: bool = True) -> Any:
+    return parse_json(complete_text(prompt, model=model, system=system, max_tokens=max_tokens, cache=cache))
+
+
+def map_json(
+    prompts: List[str],
+    *,
+    model: str,
+    system: str,
+    max_tokens: int = 4096,
+    workers: int = 6,
+    cache: bool = True,
+) -> List[Optional[Any]]:
+    """Run many batches that share the same cached `system` prefix, concurrently.
+
+    The first call runs alone to warm the shared cache; the rest fan out across a
+    thread pool (so they read the cached prefix). A per-batch failure yields None
+    (the caller fails open) rather than aborting the whole run; a systemic failure
+    (bad key, no credit) surfaces immediately from the warm-up call.
+    """
+    if not prompts:
+        return []
+
+    results: List[Optional[Any]] = [None] * len(prompts)
+    results[0] = complete_json(prompts[0], model=model, system=system, max_tokens=max_tokens, cache=cache)
+
+    rest = list(range(1, len(prompts)))
+    if rest:
+        def one(i: int):
+            try:
+                return complete_json(prompts[i], model=model, system=system, max_tokens=max_tokens, cache=cache)
+            except LLMError:
+                return None  # transient/per-batch failure → caller handles missing results
+
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for i, res in zip(rest, ex.map(one, rest)):
+                results[i] = res
+    return results

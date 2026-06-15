@@ -5,10 +5,11 @@ description = "Personal job-discovery agent: fetch listings, score fit with Clau
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "claude-agent-sdk>=0.2.0",  # reasoning layer (needs Python 3.10+)
+    "anthropic>=0.69",           # reasoning layer transport (Messages API)
     "requests>=2.31",            # data layer HTTP
     "pypdf>=4.0",                # one-time resume text extraction
     "pyyaml>=6.0",               # companies.yaml watchlist
+    # "claude-agent-sdk>=0.2.0", # retired: replaced by the raw Anthropic API for speed
 ]
 
 [project.scripts]

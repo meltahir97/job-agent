@@ -89,6 +89,15 @@ NON_US_TERMS = [
     "melbourne", "israel", "tel aviv", "brazil", "sao paulo", "mexico", "poland", "warsaw",
     "krakow", "portugal", "lisbon", "japan", "tokyo", "china", "shanghai", "hong kong",
     "united arab emirates", "dubai", "europe", "emea", "apac", "latam",
+    # additions (observed leaks + common hubs)
+    "south korea", "korea", "seoul", "mumbai", "delhi", "taiwan", "taipei", "colombia",
+    "bogota", "bogotá", "philippines", "manila", "indonesia", "jakarta", "thailand",
+    "bangkok", "vietnam", "malaysia", "kuala lumpur", "sweden", "stockholm", "switzerland",
+    "zurich", "norway", "oslo", "denmark", "copenhagen", "finland", "helsinki", "austria",
+    "vienna", "belgium", "brussels", "italy", "milan", "rome", "greece", "athens", "turkey",
+    "istanbul", "egypt", "cairo", "nigeria", "lagos", "kenya", "nairobi", "new zealand",
+    "auckland", "argentina", "buenos aires", "chile", "santiago", "czech", "prague",
+    "hungary", "budapest", "romania", "bucharest", "remote - emea", "remote - apac",
 ]
 NON_US_TOKENS = {"uk", "eu", "gb"}
 
@@ -98,6 +107,7 @@ US_NON_BAY_TERMS = [
     "los angeles", "san diego", "denver", "atlanta", "washington, dc", "washington dc",
     "dallas", "houston", "miami", "philadelphia", "phoenix", "portland", "nashville",
     "minneapolis", "detroit", "salt lake city", "raleigh", "pittsburgh", "columbus", "irvine",
+    "santa monica", "stamford", "cary", "san antonio", "kansas city", "charlotte", "tampa",
 ]
 
 
