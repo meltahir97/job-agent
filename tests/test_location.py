@@ -53,6 +53,31 @@ class TestLocationFilter(unittest.TestCase):
     def test_remote_flag_but_non_us_location_dropped(self):
         self.assertFalse(D("London", remote=True).keep)
 
+    def test_previously_leaked_examples_now_drop(self):
+        # The exact leaks called out: non-US + US-but-not-Bay on-site must DROP.
+        for loc in ("Seoul, South Korea", "Mumbai, India", "Taipei, Taiwan", "Bogotá, Colombia",
+                    "Santa Monica, CA", "Stamford, CT", "Cary, NC"):
+            self.assertFalse(D(loc).keep, loc)
+
+    def test_positive_us_remote_signal_kept(self):
+        for loc in ("US-Remote", "Remote - US", "Remote, US", "United States (Remote)"):
+            d = D(loc)
+            self.assertTrue(d.keep, loc)
+            self.assertTrue(d.remote, loc)
+
+    def test_us_state_abbrev_only_uppercase(self):
+        self.assertFalse(D("Denver, CO").keep)            # CO state -> non-Bay US -> drop
+        # lowercase English words that look like abbreviations must NOT trigger US-state
+        d = D("Galaxy Office (in orbit)")                  # 'in'/'or' are not uppercase abbrevs
+        self.assertTrue(d.keep)
+        self.assertIsNone(d.remote)
+
+    def test_us_unspecified_city_kept_ambiguous(self):
+        for loc in ("United States", "California"):        # US but city unknown -> could be Bay
+            d = D(loc)
+            self.assertTrue(d.keep, loc)
+            self.assertIsNone(d.remote, loc)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

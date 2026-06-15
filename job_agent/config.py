@@ -108,7 +108,30 @@ US_NON_BAY_TERMS = [
     "dallas", "houston", "miami", "philadelphia", "phoenix", "portland", "nashville",
     "minneapolis", "detroit", "salt lake city", "raleigh", "pittsburgh", "columbus", "irvine",
     "santa monica", "stamford", "cary", "san antonio", "kansas city", "charlotte", "tampa",
+    "sacramento", "fresno", "long beach", "anaheim", "bakersfield",  # CA-but-not-Bay
 ]
+
+# US states — a positive "is-US" signal. Full names match as substrings; abbreviations
+# match only as UPPERCASE whole-words (so "City, ST") to avoid catching English words
+# like "in"/"or"/"me". A non-California US state present + not Bay => US-but-not-Bay (drop).
+US_STATE_NAMES = [
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado", "connecticut",
+    "delaware", "florida", "georgia", "hawaii", "idaho", "illinois", "indiana", "iowa",
+    "kansas", "kentucky", "louisiana", "maine", "maryland", "massachusetts", "michigan",
+    "minnesota", "mississippi", "missouri", "montana", "nebraska", "nevada", "new hampshire",
+    "new jersey", "new mexico", "new york", "north carolina", "north dakota", "ohio",
+    "oklahoma", "oregon", "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington", "west virginia",
+    "wisconsin", "wyoming", "district of columbia",
+]
+US_STATE_ABBR = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN",
+    "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV",
+    "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN",
+    "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC",
+}
+# Explicit US-remote phrasings.
+US_REMOTE_TERMS = ["remote - us", "us-remote", "us remote", "remote, us", "remote (us"]
 
 
 def ensure_dirs() -> None:
