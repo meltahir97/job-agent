@@ -1,11 +1,10 @@
 # companies.yaml — watchlist from your Google Drive "Next Steps" sheet
 # ("Potential Companies", tiered 1-3), pulled + live-resolved 2026-06-03.
 #
-# The ats+slug below were verified live against each public board. UNRESOLVED
-# companies (Apple, EA, TCG, Pixar, Google/YouTube, Nvidia) are on Workday /
-# SmartRecruiters / custom career sites with no public Greenhouse/Lever/Ashby/
-# Workable board — listed as comments. Set ats+slug manually if you find one, or
-# they need a new source type (e.g. a Workday adapter — see README roadmap).
+# All ats/slug verified live. Supported sources: Greenhouse, Lever, Ashby, Workable,
+# SmartRecruiters (api.smartrecruiters.com), and Workday (needs dc + site). NVIDIA now
+# resolves via Workday. Still UNRESOLVED (commented inline, with reasons): Apple, EA,
+# Pixar, Google/YouTube, TCG.
 #
 # Tip: if you consider this watchlist private, add companies.yaml to .gitignore.
 
@@ -26,7 +25,7 @@ companies:
   - name: Epic Games
     ats: greenhouse
     slug: epicgames
-  # Apple — UNRESOLVED (custom careers site; no public supported board)
+  # Apple — UNRESOLVED: jobs.apple.com is custom; Workday probe returned 401. No public feed.
 
   # --- Tier 2 ---
   - name: Spotify
@@ -44,10 +43,12 @@ companies:
   - name: Roku
     ats: greenhouse
     slug: roku
-  # EA — UNRESOLVED (SmartRecruiters)
-  # TCG — UNRESOLVED (no public board found)
-  # Pixar — UNRESOLVED (Disney custom careers)
-  # YouTube / Google — UNRESOLVED (Google custom careers)
+  # EA — UNRESOLVED: not on SmartRecruiters under ElectronicArts/EA (API returns 0;
+  #   source verified working via Bosch=4601, Visa=10). Appears to use a private ATS now.
+  # TCG (The Chernin Group) — UNRESOLVED: no public ATS board found (small VC).
+  # Pixar — UNRESOLVED: no standalone board; roles live on Disney's Workday
+  #   (disney/wd5/disneycareer, verified). Add a "Disney" workday entry for that pipeline.
+  # YouTube / Google — UNRESOLVED: Google careers is custom (no clean public JSON feed).
 
   # --- Tier 3 ---
   - name: Substack
@@ -56,4 +57,8 @@ companies:
   - name: "Crunchyroll (Sony)"
     ats: greenhouse
     slug: crunchyroll
-  # Nvidia — UNRESOLVED (Workday)
+  - name: NVIDIA
+    ats: workday
+    slug: nvidia
+    dc: wd5
+    site: NVIDIAExternalCareerSite

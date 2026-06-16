@@ -9,13 +9,13 @@ Schema (top-level `companies:` list):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from . import config
 
-VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "auto"}
+VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday", "auto"}
 
 
 @dataclass
@@ -23,6 +23,7 @@ class Company:
     name: str
     ats: str = "auto"
     slug: Optional[str] = None
+    extra: Dict[str, str] = field(default_factory=dict)  # source-specific (e.g. Workday dc/site)
 
 
 class CompaniesError(RuntimeError):
@@ -58,5 +59,8 @@ def load_companies(path: Optional[Path] = None) -> List[Company]:
             )
         if ats != "auto" and not slug:
             raise CompaniesError(f"{name}: 'slug' is required when ats={ats}.")
-        out.append(Company(name=name, ats=ats, slug=slug))
+        extra = {k: str(v) for k, v in e.items() if k not in ("name", "ats", "slug") and v is not None}
+        if ats == "workday" and not (extra.get("dc") and extra.get("site")):
+            raise CompaniesError(f"{name}: ats=workday needs 'dc' (e.g. wd5) and 'site' fields.")
+        out.append(Company(name=name, ats=ats, slug=slug, extra=extra))
     return out

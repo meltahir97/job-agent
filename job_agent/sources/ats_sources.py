@@ -29,10 +29,11 @@ def _remote_from_text(*texts: Optional[str]) -> Optional[bool]:
 class _AtsSource(JobSource):
     ats = "base"
 
-    def __init__(self, slug: str, company: str, session=None, timeout: int = 20):
+    def __init__(self, slug: str, company: str, session=None, timeout: int = 20, **extra):
         self.slug = slug
         self.company = company
         self.timeout = timeout
+        self.extra = extra  # source-specific config (e.g. Workday dc/site); ignored by most
         self.session = session or requests.Session()
 
     def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
@@ -144,9 +145,136 @@ class WorkableSource(_AtsSource):
         )
 
 
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120 Safari/537.36"
+)
+
+
+class SmartRecruitersSource(JobSource):
+    """SmartRecruiters public postings API: api.smartrecruiters.com/v1/companies/{slug}/postings.
+
+    Note: the postings *list* has no full JD, so description is composed from
+    function/department/level fields (enough for triage; thinner for deep scoring).
+    Unknown companies return 200 + empty (grounding-safe: no board => no rows).
+    """
+
+    name = ats = "smartrecruiters"
+    max_results = 400
+
+    def __init__(self, slug, company, session=None, timeout: int = 20, **extra):
+        self.slug = slug
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        out: List[Job] = []
+        offset, page = 0, 100
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "application/json"}
+        while True:
+            url = f"https://api.smartrecruiters.com/v1/companies/{self.slug}/postings?limit={page}&offset={offset}"
+            resp = self.session.get(url, headers=headers, timeout=self.timeout)
+            resp.raise_for_status()
+            data = resp.json()
+            content = data.get("content") or []
+            out.extend(self._normalize(r) for r in content)
+            offset += page
+            if not content or offset >= (data.get("totalFound") or 0) or len(out) >= self.max_results:
+                break
+        return out[: self.max_results]
+
+    def _normalize(self, raw: dict) -> Job:
+        loc = raw.get("location") or {}
+        location = ", ".join(p for p in (loc.get("city"), loc.get("region"), loc.get("country")) if p) or None
+        remote = True if loc.get("remote") else _remote_from_text(location, raw.get("name"))
+        dept = (raw.get("department") or {}).get("label")
+        func = (raw.get("function") or {}).get("label")
+        level = (raw.get("experienceLevel") or {}).get("label")
+        emp = (raw.get("typeOfEmployment") or {}).get("label")
+        desc = " · ".join(x for x in (func or dept, level, emp, location) if x) or None
+        return Job(
+            source=self.ats,
+            source_job_id=str(raw.get("id")),
+            title=raw.get("name"),
+            company=self.company,
+            location=location,
+            remote=remote,
+            description=desc,
+            url=f"https://jobs.smartrecruiters.com/{self.slug}/{raw.get('id')}",
+            posted_at=raw.get("releasedDate"),
+            category=dept,
+            raw=raw,
+        )
+
+
+class WorkdaySource(JobSource):
+    """Public Workday CXS feed: POST {tenant}.{dc}.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs.
+
+    Needs tenant (slug) + dc (e.g. wd5) + site (career-site id) from companies.yaml.
+    The list payload has no JD and only a relative 'Posted X ago' date, so description
+    is minimal and posted_at is left null (first_seen_at tracks recency). Some tenants
+    block bots (401/403) -> raises, surfaced as UNRESOLVED by the caller.
+    """
+
+    name = ats = "workday"
+    max_results = 400
+
+    def __init__(self, slug, company, session=None, timeout: int = 20, **extra):
+        self.slug = slug  # Workday tenant
+        self.company = company
+        self.timeout = timeout
+        self.dc = extra.get("dc")
+        self.site = extra.get("site")
+        self.session = session or requests.Session()
+        if not (self.slug and self.dc and self.site):
+            raise ValueError(f"workday source for {company!r} needs slug(tenant) + dc + site")
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        base = f"https://{self.slug}.{self.dc}.myworkdayjobs.com"
+        api = f"{base}/wday/cxs/{self.slug}/{self.site}/jobs"
+        view = f"{base}/en-US/{self.site}"
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "application/json", "Content-Type": "application/json"}
+        out: List[Job] = []
+        offset, page = 0, 20
+        while True:
+            resp = self.session.post(
+                api, headers=headers,
+                json={"appliedFacets": {}, "limit": page, "offset": offset, "searchText": ""},
+                timeout=self.timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            postings = data.get("jobPostings") or []
+            out.extend(self._normalize(p, view) for p in postings)
+            offset += page
+            if not postings or offset >= (data.get("total") or 0) or len(out) >= self.max_results:
+                break
+        return out[: self.max_results]
+
+    def _normalize(self, raw: dict, view_base: str) -> Job:
+        path = raw.get("externalPath") or ""
+        loc = raw.get("locationsText")
+        return Job(
+            source=self.ats,
+            source_job_id=path or str(raw.get("title")),
+            title=raw.get("title"),
+            company=self.company,
+            location=loc,
+            remote=_remote_from_text(loc, raw.get("title")),
+            description=" · ".join(x for x in (raw.get("title"), loc) if x) or None,
+            url=(view_base + path) if path else None,
+            posted_at=None,  # list gives only a relative date; first_seen_at tracks recency
+            category=None,
+            raw=raw,
+        )
+
+
 SOURCE_BY_ATS = {
     "greenhouse": GreenhouseSource,
     "lever": LeverSource,
     "ashby": AshbySource,
     "workable": WorkableSource,
+    "smartrecruiters": SmartRecruitersSource,
+    "workday": WorkdaySource,
 }

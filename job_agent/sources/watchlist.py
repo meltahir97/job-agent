@@ -69,7 +69,7 @@ class WatchlistSource:
                 continue
 
             try:
-                src = source_cls(res.slug, co.name, session=self.session, timeout=self.timeout)
+                src = source_cls(res.slug, co.name, session=self.session, timeout=self.timeout, **(co.extra or {}))
                 fetched = src.fetch()
             except Exception as e:  # network/HTTP/schema — record and keep going
                 cr.error = f"fetch failed: {e}"
