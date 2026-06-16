@@ -138,7 +138,8 @@ def generate_for_role(
     if not regenerate and store.get_draft(conn, job["id"]):
         return None
 
-    result = llm.complete_json(_draft_prompt(master, voice, job), model=model, system=DRAFT_SYSTEM, max_tokens=8192)
+    full = store.get_job(conn, job["id"]) or job  # select_master rows omit `description`
+    result = llm.complete_json(_draft_prompt(master, voice, full), model=model, system=DRAFT_SYSTEM, max_tokens=8192)
     resume_md = (result.get("resume_markdown") or "").strip()
     cover_md = (result.get("cover_letter_markdown") or "").strip()
     if not resume_md or not cover_md:
