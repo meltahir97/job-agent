@@ -34,10 +34,9 @@ are skipped and you are never notified twice.
 
 ## Requirements
 
-- **Python 3.11+** (the `claude-agent-sdk` reasoning layer requires ≥ 3.10).
-  This repo's data layer is also 3.9-compatible, but use 3.11+ for the full pipeline.
-- **Node.js 18+** available on PATH. The Agent SDK ships a **bundled** Claude Code CLI
-  (its transport), so no separate `@anthropic-ai/claude-code` install is needed.
+- **Python 3.11+** (3.12 recommended; install deps with `uv pip install -e .`).
+  The reasoning layer calls the **Anthropic Messages API** via the `anthropic` SDK —
+  no Node.js / Agent-SDK CLI needed anymore.
 - An **Anthropic API key** (with credit balance). **Adzuna keys are optional** —
   only needed for the `--adzuna` keyword source; the default watchlist needs no keys.
 
@@ -88,24 +87,30 @@ job-agent profile --force                    # force re-parse
 job-agent score
 job-agent score --opus
 
-# Write a ranked Markdown digest to ./digests/
-job-agent digest                             # default: fit >= 60, only NEW roles
-job-agent digest --min-score 75 --limit 25
-job-agent digest --all                       # re-include roles already sent
+job-agent score --batch                      # cheaper Batch API (latency-tolerant)
 
-# Mark a job saved/dismissed (feeds future scoring); ids are shown in the digest
+# Publish the website (./docs/index.html) + optional email nudge
+job-agent publish
+job-agent publish --dry-run                   # build locally + print; don't push/email
+
+# Mark a job saved/dismissed (feeds future scoring); ids are shown in the site/digest
 job-agent feedback 42 --saved
 job-agent feedback 42 --dismissed --note "too junior"
-job-agent feedback --list
 
-# Run the whole pipeline end-to-end (fetch -> profile -> triage -> deep-score -> digest)
+# Markdown digest (optional secondary output; tiered, NEW-only, grouped by company)
+job-agent digest
+
+# Full pipeline: fetch -> score -> publish website (+ email)
 job-agent run
+job-agent run --dry-run                       # preview the site + email, publish nothing
+job-agent run --if-due --force                # scheduled-run 47h guard / override
 ```
 
-Digests are written to `./digests/` as timestamped Markdown files, **grouped by
-company** and ranked by fit within each company. Each run is incremental:
-already-sent roles are skipped, dismissed roles are hidden, and your saved/dismissed
-history is fed into future deep-scoring.
+The **website** (`./docs/index.html`, published via GitHub Pages) is the primary
+output — see *Publishing* below. The Markdown `digest` is an optional secondary
+output. Both are tiered (Strong ≥ 75, Worth-a-look 55–74), grounded on real scored
+listings, and incremental (dismissed roles hidden; saved/dismissed history feeds
+future scoring).
 
 ---
 
@@ -147,16 +152,60 @@ Add or remove cities/terms there to widen or tighten the net.
 
 ---
 
-## Scheduling (cron)
+## Publishing (GitHub Pages)
 
-Run the full pipeline every morning at 8am:
+Each run writes a single self-contained `./docs/index.html` (inline CSS, no build
+step) — all current in-scope roles, grouped by tier → company, with fit, rationale,
+red flags, dates, Apply links, and a **NEW** badge for roles first seen since the
+last publish. The site accumulates in SQLite, so it's incremental across runs.
 
-```cron
-0 8 * * *  cd "/Users/muhammadeltahir/Projects/Job Search" && ./.venv/bin/python -m job_agent run >> data/run.log 2>&1
+**One-time setup (the agent can't do this without GitHub auth):**
+
+1. Create an empty GitHub repo (e.g. `job-agent`). **Don't** add a README/license.
+2. Point this repo at it and push:
+   ```bash
+   git remote add origin https://github.com/<you>/job-agent.git
+   git push -u origin main
+   ```
+3. Enable Pages: GitHub repo → **Settings → Pages** → **Source: Deploy from a branch**
+   → **Branch: `main`**, **Folder: `/docs`** → **Save**.
+4. Your site goes live at **`https://<you>.github.io/job-agent/`** (first build ~1 min).
+   Put that URL in `.env` as `SITE_URL=` so the email nudge links to it.
+
+After that, `job-agent publish` (or `run`) commits `./docs` and `git push`es — Pages
+redeploys automatically. `--dry-run` builds the site locally and prints what *would*
+publish/email, pushing/sending nothing.
+
+> If your watchlist/résumé data shouldn't be public, use a **private** repo with
+> Pages, or publish to a separate public repo that contains only `docs/`.
+
+### Email nudge (optional)
+
+If `SMTP_USER` + `SMTP_APP_PASSWORD` (a Gmail **app password**) are in `.env`, each
+run with ≥1 new role emails a short nudge ("N new — X strong, Y worth a look; top 3;
+site link") to `NOTIFY_EMAIL` (defaults to muhammad.e.eltahir@gmail.com). 0 new → no
+email; missing creds → skipped silently. Never blocks the run.
+
+---
+
+## Scheduling (every 2 days, launchd — macOS)
+
+`run --if-due` records a last-success timestamp and **skips if <47h since the last
+success** (so a wake-from-sleep catch-up never double-runs); `--force` overrides.
+`scripts/run_scheduled.sh` wraps it; `scripts/com.jobagent.run.plist` triggers it
+every 2 days. **Activate it yourself** (not auto-loaded):
+
+```bash
+cp scripts/com.jobagent.run.plist ~/Library/LaunchAgents/
+launchctl load   ~/Library/LaunchAgents/com.jobagent.run.plist   # start
+launchctl list | grep com.jobagent.run                           # status
+tail -f data/run.log                                             # watch a run
+launchctl unload ~/Library/LaunchAgents/com.jobagent.run.plist   # stop
 ```
 
-`run` is fully wired (fetch → profile → triage → deep-score → digest) and
-incremental, so a daily cron only ever scores/notifies genuinely new roles.
+> launchd only fires while the Mac is **awake**; the 47h guard makes missed runs
+> self-correct on the next wake. For true 24/7 cadence, run the same wrapper from an
+> always-on host (a small VM / Raspberry Pi) via `cron`, or a CI scheduler.
 
 ---
 
@@ -172,20 +221,27 @@ job_agent/
   companies.py      companies.yaml loader (watchlist schema)
   queries.py        Adzuna default query set (optional --adzuna source)
   textutil.py       HTML->text + epoch->ISO helpers
+  tiers.py          tier thresholds (Strong / Worth a look) — shared
+  website.py        self-contained GitHub Pages site (./docs/index.html)
+  notify.py         optional Gmail-SMTP nudge
   sources/
     base.py         JobSource interface + JobQuery (extension point)
     ats.py          public ATS HTTP layer (endpoints, raw fetch, probe)
     resolver.py     ats=auto board resolver + unresolved reporting
-    ats_sources.py  Greenhouse / Lever / Ashby / Workable sources
-    location.py     Bay-Area / US-remote location filter
+    ats_sources.py  Greenhouse / Lever / Ashby / Workable / SmartRecruiters / Workday
+    location.py     Bay-Area / US-remote location filter (positive US-signal)
     watchlist.py    WatchlistSource orchestration (default source)
     adzuna.py       AdzunaSource (optional, behind --adzuna)
   reasoning/
-    llm.py          single grounded, tool-free seam to claude-agent-sdk
+    llm.py          Anthropic Messages API seam (concurrent asyncio + caching + Batch)
     profile.py      resume -> cached structured profile
     scoring.py      triage (haiku) + deep score (sonnet/opus)
-  digest.py         company-grouped Markdown digest + seen-state
+  digest.py         company/tier Markdown digest + seen-state
   cli.py            command-line entrypoint
+scripts/
+  run_scheduled.sh        launchd wrapper (run --if-due)
+  com.jobagent.run.plist  launchd job (every 2 days)
+docs/index.html           the published website (GitHub Pages source)
 ```
 
 ---
@@ -210,10 +266,26 @@ job_agent/
 - [x] **4. Wired as default** — watchlist is the default `fetch`/`run`; Adzuna behind `--adzuna`; digest grouped by company
 - [x] **5. Live verification** — Greenhouse (Stripe, Databricks), Ashby (Notion, Ramp), Lever (Mistral) return real postings; full pipeline ran live (732 in-scope → triage → deep-score → company-grouped digest)
 
-The pipeline is **code-complete with 53 offline tests**, all green, and
-**live-verified end-to-end**. Workable is implemented + fixture-tested but not
-live-verified (no public board with open roles found among candidates; its
-endpoint never 404s, so auto-resolution only trusts it when it returns >0 roles).
+### Final consolidation (current)
+
+- [x] **M0 — Efficiency:** scoring moved off the Agent SDK subprocess transport to
+  the raw **Anthropic Messages API** (asyncio + semaphore 5, SDK retries; optional
+  `--batch`). A full ~1.4k-job run went **~35 min → ~4–5 min, ~$1.5–2.5** (`--batch`
+  ~50% cheaper). Same prompts/models/JSON contract/grounding.
+- [x] **M1 — Location leak fixed:** positive US-signal filter (state names/abbrevs,
+  "Remote - US", …). Seoul/Mumbai/Taipei/Bogotá + Santa Monica/Stamford/Cary now drop.
+- [x] **M2 — More sources:** added **SmartRecruiters** (validated) + **Workday**.
+  Resolved **NVIDIA** (Workday). Still UNRESOLVED (no fabrication): **Apple** (custom
+  site; Workday 401), **EA** (not on SmartRecruiters under any tried id; private ATS),
+  **Pixar** (no standalone board; lives on Disney's Workday `disney/wd5/disneycareer`),
+  **Google/YouTube** (custom), **TCG** (no public board).
+- [x] **M3 — Tiers:** Strong ≥ 75 / Worth-a-look 55–74 (config `TIER_*`), below excluded.
+- [x] **M4 — Website + email:** GitHub Pages `docs/index.html`, NEW badges, optional
+  Gmail nudge, `--dry-run` gate.
+- [x] **M5 — Schedule:** `run --if-due` (47h guard) + launchd plist (every 2 days).
+
+**64 offline tests, all green.** Workable still fixture-only (no public board found).
+Markdown `digest` retained as a secondary output.
 
 **Deferred to later phases (not built yet):** resume tailoring, cover letters,
 application status tracking, inbox monitoring. **Near-term extensions:** email

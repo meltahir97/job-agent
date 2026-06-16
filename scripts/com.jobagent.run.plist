@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jobagent.run</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/muhammadeltahir/Projects/Job Search/scripts/run_scheduled.sh</string>
+    </array>
+
+    <!-- Every 2 days (172800s) while loaded. If the Mac was asleep, launchd runs
+         it once on wake; `run --if-due` then skips if <47h since the last success. -->
+    <key>StartInterval</key>
+    <integer>172800</integer>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search/data/launchd.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search/data/launchd.err.log</string>
+</dict>
+</plist>
