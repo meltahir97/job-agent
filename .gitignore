@@ -1,5 +1,9 @@
 # --- secrets ---
 .env
+# Google service-account key (contains a private key — NEVER commit)
+job-agent-*.json
+*service-account*.json
+*service_account*.json
 
 # --- python ---
 __pycache__/

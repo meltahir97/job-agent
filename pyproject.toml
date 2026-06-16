@@ -5,11 +5,14 @@ description = "Personal job-discovery agent: fetch listings, score fit with Clau
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.69",           # reasoning layer transport (Messages API)
-    "requests>=2.31",            # data layer HTTP
-    "pypdf>=4.0",                # one-time resume text extraction
-    "pyyaml>=6.0",               # companies.yaml watchlist
-    # "claude-agent-sdk>=0.2.0", # retired: replaced by the raw Anthropic API for speed
+    "anthropic>=0.69",                  # reasoning layer transport (Messages API)
+    "requests>=2.31",                   # data layer HTTP
+    "pypdf>=4.0",                       # resume / Drive PDF text extraction
+    "pyyaml>=6.0",                      # companies.yaml watchlist
+    "google-api-python-client>=2.0",    # Drive API: master profile from Drive materials
+    "google-auth>=2.0",                 # service-account auth for Drive (read-only)
+    "python-docx>=1.1",                 # editable .docx resume + cover-letter drafts
+    # "claude-agent-sdk>=0.2.0",        # retired: replaced by the raw Anthropic API for speed
 ]
 
 [project.scripts]

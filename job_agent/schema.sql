@@ -68,3 +68,33 @@ CREATE TABLE IF NOT EXISTS notifications (
     digest_path TEXT,
     notified_at TEXT NOT NULL
 );
+
+-- Generated application drafts (resume + cover letter) per role. LOCAL ONLY —
+-- never published to the website. One current set per job; --regenerate replaces.
+CREATE TABLE IF NOT EXISTS drafts (
+    job_id      INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
+    company     TEXT,
+    title       TEXT,
+    dir         TEXT,                            -- ./applications/<company>-<role>/
+    resume_md   TEXT,
+    resume_docx TEXT,
+    cover_md    TEXT,
+    cover_docx  TEXT,
+    model       TEXT,
+    created_at  TEXT NOT NULL
+);
+
+-- Weekly company-discovery proposals (PROPOSE-ONLY; never auto-added to the
+-- watchlist). norm_name suppresses re-proposing the same company.
+CREATE TABLE IF NOT EXISTS suggestions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    company      TEXT NOT NULL,
+    norm_name    TEXT NOT NULL UNIQUE,           -- lowercased key, dedup / suppression
+    reason       TEXT,                           -- why-it-fits, grounded in evidence
+    evidence_url TEXT,                           -- source URL we can cite
+    ats          TEXT,                           -- resolved ATS, if any
+    slug         TEXT,                           -- resolved board slug, if any
+    status       TEXT NOT NULL,                  -- proposed | approved | dismissed | unverified
+    first_seen   TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);

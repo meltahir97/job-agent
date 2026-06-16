@@ -104,3 +104,11 @@ def load_or_build(conn: sqlite3.Connection, *, force: bool = False, model: str =
     db.set_meta(conn, "resume_hash", current_hash)
     db.set_meta(conn, "profile_path", str(config.PROFILE_PATH))
     return profile
+
+
+def load_for_scoring(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Profile used for triage/deep scoring and drafting: prefer the Drive master
+    profile (full multi-thread background); fall back to the resume profile."""
+    if config.MASTER_PROFILE_PATH.exists():
+        return json.loads(config.MASTER_PROFILE_PATH.read_text(encoding="utf-8"))
+    return load_or_build(conn)

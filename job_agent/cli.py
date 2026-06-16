@@ -208,7 +208,7 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     model = config.STRONG_MODEL if getattr(args, "opus", False) else config.DEEP_MODEL
     try:
-        prof = profile_mod.load_or_build(conn)
+        prof = profile_mod.load_for_scoring(conn)
         stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
         print(f"   triaged {stats['triaged']} (kept {stats['kept']}); "
               f"deep-scored {stats['deep_scored']} with {model}.")
@@ -232,6 +232,42 @@ def cmd_publish(args: argparse.Namespace) -> int:
     print("== publish ==")
     _publish(conn, dry_run=args.dry_run)
     conn.close()
+    return 0
+
+
+def cmd_master_profile(args: argparse.Namespace) -> int:
+    """Build (or refresh) the master profile from ALL Drive materials, then summarize."""
+    from . import drive
+    from .reasoning import master_profile as mpm
+    from .reasoning.llm import LLMError
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    try:
+        master, voice, files = mpm.load_or_build(conn, force=args.force)
+    except drive.DriveError as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    except (LLMError, FileNotFoundError) as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    conn.close()
+
+    print(f"Master profile -> {config.MASTER_PROFILE_PATH}")
+    print(f"  built from {len(files)} Drive document(s):")
+    for f in files:
+        tag = " [cover letter]" if drive.is_cover_letter(f) else ""
+        print(f"    - {f.get('name')}  ({str(f.get('modifiedTime'))[:10]}){tag}")
+    print(f"  name: {master.get('name')}  | seniority: {master.get('seniority')}  | yrs: {master.get('years_experience')}")
+    print(f"  threads: {', '.join(master.get('experience_threads') or []) or '—'}")
+    print(f"  employers: {len(master.get('employers') or [])}  | achievements: {len(master.get('achievements') or [])}")
+    covers = (voice.get("_meta", {}) or {}).get("cover_letters_used") or []
+    print(f"  voice: {'approximate' if voice.get('approximate') else 'captured'} from {len(covers)} cover letter(s)")
+    if master.get("variances"):
+        print(f"  variances reconciled: {len(master['variances'])}")
     return 0
 
 
@@ -275,7 +311,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     db.init_db(conn)
     model = config.STRONG_MODEL if args.opus else config.DEEP_MODEL
     try:
-        prof = profile_mod.load_or_build(conn)
+        prof = profile_mod.load_for_scoring(conn)
         stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
     except (FileNotFoundError, LLMError) as e:
         print(f"error: {e}")
@@ -374,6 +410,9 @@ def build_parser() -> argparse.ArgumentParser:
     pr = sub.add_parser("profile", help="Parse resume -> cached profile JSON")
     pr.add_argument("--force", action="store_true", help="re-parse even if the resume is unchanged")
     pr.set_defaults(func=cmd_profile)
+    mp_p = sub.add_parser("master-profile", help="Build the master profile from ALL Drive materials")
+    mp_p.add_argument("--force", action="store_true", help="rebuild even if the Drive document set is unchanged")
+    mp_p.set_defaults(func=cmd_master_profile)
     sc = sub.add_parser("score", help="Triage (haiku) + deep-score (sonnet) new jobs")
     sc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
     sc.add_argument("--batch", action="store_true", help="use the Batch API (cheaper, latency-tolerant)")

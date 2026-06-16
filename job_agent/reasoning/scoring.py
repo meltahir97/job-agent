@@ -20,9 +20,12 @@ from . import llm
 
 TRIAGE_SYSTEM = (
     "You are a HIGH-RECALL job-fit triager for one specific candidate (profile below) whose "
-    "background is strategy / corporate development / M&A / business development / partnerships "
-    "/ operations / strategic finance / general management. Every listing is from a company on "
-    "the candidate's target watchlist, so KEEP generously and let deep scoring judge fit. DROP "
+    "background spans MULTIPLE threads — see the profile's experience_threads and employers — "
+    "e.g. strategy, operations, chief of staff, business development & partnerships, dealmaking "
+    "/ corporate development, campaign & analytics, general management, and media/entertainment. "
+    "Judge fit against the candidate's FULL background, not any single title: a role that "
+    "strongly fits ANY major thread should be KEPT. Every listing is from a company on the "
+    "candidate's target watchlist, so KEEP generously and let deep scoring judge fit. DROP "
     "a role ONLY if it is an OBVIOUS HARD-NO — i.e. it clearly requires a fundamentally different "
     "skill set the candidate does not have: hands-on software/ML engineering, design (UX/UI/"
     "graphic), HR / recruiting, accounting / audit / tax, hands-on data science, customer "
@@ -34,7 +37,11 @@ TRIAGE_SYSTEM = (
 )
 
 DEEP_SYSTEM = (
-    "You are evaluating job fit for one specific candidate whose profile is given below. For "
+    "You are evaluating job fit for one specific candidate whose profile is given below. Judge "
+    "against the candidate's FULL, multi-thread background — every employer, experience_thread, "
+    "and achievement in the profile — NOT just the most recent title. A strong fit for ANY major "
+    "thread (strategy, operations, chief of staff, BD/partnerships, dealmaking/corp dev, "
+    "analytics, general management, media) should score well. For "
     "EACH listing produce: a 0-100 fit score; a label; 'pros' (2-4 short bullets on why it "
     "fits — specific overlap with the profile); and 'cons' (2-4 short bullets: gaps, watch-outs, "
     "or disqualifiers). Labels (generous on recall): 'match' = strong, on-target fit; 'stretch' "
@@ -47,13 +54,28 @@ DEEP_SYSTEM = (
 )
 
 PROFILE_KEYS = [
-    "name", "seniority", "years_experience", "domains", "skills",
-    "industries", "target_titles", "dealbreakers", "nice_to_haves", "summary",
+    "name", "seniority", "years_experience", "experience_threads", "domains", "skills",
+    "industries", "achievements", "education", "target_titles", "dealbreakers",
+    "nice_to_haves", "summary",
 ]
 
 
 def _profile_brief(profile: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: profile.get(k) for k in PROFILE_KEYS if k in profile}
+    """Compact view of the profile for the cached system prefix. Includes the full
+    multi-thread background (employers compacted) so scoring judges the whole career."""
+    brief = {k: profile.get(k) for k in PROFILE_KEYS if k in profile}
+    emps = profile.get("employers")
+    if isinstance(emps, list):
+        brief["employers"] = [
+            {
+                "company": e.get("company"),
+                "titles": e.get("titles") or e.get("title"),
+                "dates": e.get("dates"),
+                "highlights": (e.get("highlights") or [])[:3],
+            }
+            for e in emps if isinstance(e, dict)
+        ]
+    return brief
 
 
 def _system_with_profile(base: str, profile: Dict[str, Any]) -> str:

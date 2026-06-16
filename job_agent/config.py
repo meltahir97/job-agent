@@ -35,6 +35,9 @@ DB_PATH = DATA_DIR / "jobs.db"
 DIGEST_DIR = BASE_DIR / "digests"
 PROFILE_DIR = BASE_DIR / "profile"
 PROFILE_PATH = PROFILE_DIR / "profile.json"
+MASTER_PROFILE_PATH = PROFILE_DIR / "master_profile.json"  # union of all Drive materials
+VOICE_PROFILE_PATH = PROFILE_DIR / "voice_profile.json"    # tone/phrasing from cover letters
+APPLICATIONS_DIR = BASE_DIR / "applications"               # generated resume/cover-letter drafts
 RESUME_PATH = Path(os.environ.get("RESUME_PATH") or (BASE_DIR / "resume" / "resume.pdf"))
 COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH") or (BASE_DIR / "companies.yaml"))
 
@@ -42,6 +45,10 @@ COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH") or (BASE_DIR / "companies
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # Drive read-only key
+
+# --- Discovery cadence ---
+DISCOVERY_INTERVAL_DAYS = 7  # weekly company-discovery scan (skipped if run more recently)
 
 # --- Delivery (optional email nudge + published site URL) ---
 SMTP_USER = os.environ.get("SMTP_USER")              # Gmail address
@@ -147,5 +154,5 @@ US_REMOTE_TERMS = ["remote - us", "us-remote", "us remote", "remote, us", "remot
 
 
 def ensure_dirs() -> None:
-    for d in (DATA_DIR, DIGEST_DIR, PROFILE_DIR):
+    for d in (DATA_DIR, DIGEST_DIR, PROFILE_DIR, APPLICATIONS_DIR):
         d.mkdir(parents=True, exist_ok=True)
