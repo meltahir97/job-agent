@@ -109,6 +109,54 @@ def complete_json(prompt: str, *, model: str, system: str, max_tokens: int = 409
     return parse_json(complete_text(prompt, model=model, system=system, max_tokens=max_tokens, cache=cache))
 
 
+# --- web-search-grounded call (server-side tool; used by company discovery) --
+
+def web_search(prompt: str, *, model: str, system: str, max_tokens: int = 4096, max_searches: int = 5):
+    """Run a message with Anthropic's server-side web_search tool enabled.
+
+    Returns (final_text, cited_urls). The model browses to ground its answer; the
+    caller still independently VERIFIES anything actionable (resolver probe / HTTP),
+    so a hallucinated URL can never become a proposal.
+    """
+    import anthropic
+
+    client = _get_client()
+    try:
+        resp = client.messages.create(
+            model=model, max_tokens=max_tokens,
+            system=_system_blocks(system, cache=False),
+            tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": max_searches}],
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.APIError as e:
+        raise LLMError(_error_text(e)) from e
+    return _text_of(resp), _cited_urls(resp)
+
+
+def _cited_urls(message) -> List[str]:
+    """Pull the real URLs the web_search tool actually returned (for cross-checking)."""
+    urls: List[str] = []
+    for block in getattr(message, "content", []) or []:
+        # citations attached to answer text
+        for c in getattr(block, "citations", None) or []:
+            u = getattr(c, "url", None)
+            if u:
+                urls.append(u)
+        # raw web_search_tool_result blocks
+        content = getattr(block, "content", None)
+        if isinstance(content, list):
+            for item in content:
+                u = getattr(item, "url", None)
+                if u:
+                    urls.append(u)
+    seen, out = set(), []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
 # --- concurrent batch scoring (Messages API, asyncio + semaphore) -----------
 
 async def _amap(prompts, *, model, system, max_tokens, cache, concurrency) -> List[Optional[Any]]:

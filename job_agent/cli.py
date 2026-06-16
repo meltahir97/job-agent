@@ -372,6 +372,72 @@ def cmd_drafts(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_discover(args: argparse.Namespace) -> int:
+    """Propose new target companies (web-search + verify). Propose-only; never auto-added."""
+    from . import discovery
+    from .reasoning import profile as profile_mod
+    from .reasoning.llm import LLMError
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+
+    if args.list:
+        props = store.list_suggestions(conn, "proposed")
+        if not props:
+            print("No open company proposals. Run `job-agent discover`.")
+        for s in props:
+            board = f"{s['ats']}:{s['slug']}" if s["ats"] else "careers page"
+            print(f"  [{s['id']}] {s['company']}  ({board})  {s['evidence_url'] or ''}")
+            print(f"        {s['reason'] or ''}")
+        conn.close()
+        return 0
+
+    if not discovery.should_run(conn, force=args.force):
+        last = db.get_meta(conn, "last_discovery_at")
+        print(f"Skipping discovery: last scan {last} (< {config.DISCOVERY_INTERVAL_DAYS}d ago). Use --force.")
+        conn.close()
+        return 0
+    try:
+        prof = profile_mod.load_for_scoring(conn)
+        model = config.STRONG_MODEL if args.opus else config.DEEP_MODEL
+        res = discovery.discover(conn, prof, model=model)
+    except (FileNotFoundError, LLMError) as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+
+    print(f"Discovery: {len(res['proposed'])} proposed, {len(res['unverified'])} unverified.")
+    for s in store.list_suggestions(conn, "proposed"):
+        board = f"{s['ats']}:{s['slug']}" if s["ats"] else "careers page"
+        print(f"  [{s['id']}] + {s['company']}  ({board})  {s['evidence_url'] or ''}")
+        print(f"        {s['reason'] or ''}")
+    for u in res["unverified"]:
+        print(f"  ? {u['company']} — unverified, not proposed {u.get('evidence_url') or ''}")
+    if res["proposed"]:
+        print("Approve: job-agent approve <id>   |   Dismiss: job-agent dismiss <id>")
+    conn.close()
+    return 0
+
+
+def cmd_approve(args: argparse.Namespace) -> int:
+    from . import discovery
+    conn = db.connect()
+    db.init_db(conn)
+    print(discovery.approve(conn, args.id, ats=args.ats, slug=args.slug))
+    conn.close()
+    return 0
+
+
+def cmd_dismiss(args: argparse.Namespace) -> int:
+    from . import discovery
+    conn = db.connect()
+    db.init_db(conn)
+    print(discovery.dismiss(conn, args.id))
+    conn.close()
+    return 0
+
+
 def cmd_feedback(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
@@ -455,6 +521,20 @@ def build_parser() -> argparse.ArgumentParser:
     dr.add_argument("--regenerate", action="store_true", help="overwrite existing drafts")
     dr.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for drafting")
     dr.set_defaults(func=cmd_drafts)
+    disc = sub.add_parser("discover", help="Propose NEW target companies (web-search + verify; propose-only)")
+    disc.add_argument("--force", action="store_true", help="run even if a scan happened in the last week")
+    disc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for discovery")
+    disc.add_argument("--list", action="store_true", help="list open proposals (no new scan)")
+    disc.set_defaults(func=cmd_discover)
+    ap = sub.add_parser("approve", help="Approve a company proposal -> append to companies.yaml")
+    ap.add_argument("id", type=int, help="suggestion id (from `discover --list`)")
+    ap.add_argument("--ats", help="ATS if not auto-resolved (greenhouse|lever|ashby|workable|smartrecruiters|workday)")
+    ap.add_argument("--slug", help="board slug if not auto-resolved")
+    ap.set_defaults(func=cmd_approve)
+    dis = sub.add_parser("dismiss", help="Dismiss a company proposal (suppress re-proposal)")
+    dis.add_argument("id", type=int, help="suggestion id (from `discover --list`)")
+    dis.set_defaults(func=cmd_dismiss)
+
     fb = sub.add_parser("feedback", help="Mark a job saved/dismissed (tunes future scoring)")
     fb.add_argument("job_id", nargs="?", type=int, help="job id (shown in the digest)")
     grp = fb.add_mutually_exclusive_group()
