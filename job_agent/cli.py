@@ -155,9 +155,12 @@ def _publish(conn, *, dry_run: bool):
 
     path, stats, rows = website.build_site(conn, generated_at=datetime.now().astimezone())
     tops = notify.top_roles(rows)
+    drafted_roles = [f"{r['company']} – {r['title']}" for r in rows if r["drafted"]][:8]
+    proposals = len(store.list_suggestions(conn, "proposed"))
     print(f"   site -> {path}  ({stats['strong']} strong, {stats['look']} worth a look, "
-          f"{stats['new']} new, {stats['companies']} companies)")
-    subject, body = notify.render_nudge(stats, config.SITE_URL or "", tops)
+          f"{stats['new']} new, {stats['companies']} companies; {len(drafted_roles)} drafted, {proposals} proposals)")
+    subject, body = notify.render_nudge(stats, config.SITE_URL or "", tops,
+                                        drafted_roles=drafted_roles, proposals=proposals)
     if dry_run:
         print("   [dry-run] would NOT push or email. Email that WOULD send:")
         print(f"     Subject: {subject}")
@@ -165,7 +168,9 @@ def _publish(conn, *, dry_run: bool):
             print(f"     | {line}")
         return stats
     pushed = _git_publish(path)
-    print(f"   email: {notify.send_nudge(stats, config.SITE_URL or '', tops)}")
+    email_status = notify.send_nudge(stats, config.SITE_URL or "", tops,
+                                     drafted_roles=drafted_roles, proposals=proposals)
+    print(f"   email: {email_status}")
     if pushed:
         website.mark_published(conn, rows)  # clear NEW only after a successful publish
     return stats
