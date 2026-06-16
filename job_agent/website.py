@@ -26,7 +26,8 @@ _SELECT = """
 SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.remote,
        j.salary_min, j.salary_max, j.salary_currency, j.posted_at, j.first_seen_at, j.url,
        s.fit_score, s.label, s.rationale, s.red_flags,
-       (SELECT 1 FROM notifications n WHERE n.job_id = j.id) AS notified
+       (SELECT 1 FROM notifications n WHERE n.job_id = j.id) AS notified,
+       (SELECT 1 FROM drafts d WHERE d.job_id = j.id) AS drafted
 FROM jobs j
 JOIN scores s ON s.id = (
     SELECT id FROM scores s2 WHERE s2.job_id = j.id AND s2.stage = 'deep'
@@ -76,6 +77,7 @@ details.role>summary:hover{background:#fafaf8}
 .t{font-weight:600}.co{color:var(--muted)}.sp{flex:1 1 12px}
 .m{color:var(--muted);font-size:12.5px}.pay{color:var(--strong);font-weight:600;font-size:12.5px}
 .new{background:var(--new);color:#fff;border-radius:5px;padding:1px 6px;font-size:10.5px;font-weight:700}
+.drafts{background:#e7f0ff;color:var(--accent);border:1px solid #cfe0ff;border-radius:5px;padding:1px 6px;font-size:10.5px;font-weight:700}
 .body{padding:2px 14px 12px;border-top:1px solid var(--line);font-size:14px}
 .body h4{margin:10px 0 4px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
 .body ul{margin:2px 0;padding-left:18px}.body li{margin:2px 0}
@@ -146,6 +148,8 @@ def _card(row: sqlite3.Row) -> str:
         s.append(f'<span class="pay">{html.escape(pay)}</span>')
     if summary_meta:
         s.append(f'<span class="m">{summary_meta}</span>')
+    if row["drafted"]:
+        s.append('<span class="drafts">drafts ready</span>')
     if is_new:
         s.append('<span class="new">NEW</span>')
     s.append("</summary>")

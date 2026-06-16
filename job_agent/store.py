@@ -165,3 +165,61 @@ def list_feedback(conn: sqlite3.Connection):
         "SELECT f.job_id, f.decision, f.note, j.title, j.company FROM feedback f "
         "JOIN jobs j ON j.id=f.job_id ORDER BY f.updated_at DESC"
     ).fetchall()
+
+
+# --- application drafts (resume + cover letter, local-only) ------------------
+
+def record_draft(conn: sqlite3.Connection, job_id: int, *, company, title, dir,
+                 resume_md, resume_docx, cover_md, cover_docx, model) -> None:
+    conn.execute(
+        "INSERT INTO drafts (job_id, company, title, dir, resume_md, resume_docx, cover_md, cover_docx, model, created_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?) "
+        "ON CONFLICT(job_id) DO UPDATE SET company=excluded.company, title=excluded.title, dir=excluded.dir, "
+        "resume_md=excluded.resume_md, resume_docx=excluded.resume_docx, cover_md=excluded.cover_md, "
+        "cover_docx=excluded.cover_docx, model=excluded.model, created_at=excluded.created_at",
+        (job_id, company, title, str(dir), str(resume_md), str(resume_docx), str(cover_md), str(cover_docx), model, now_iso()),
+    )
+    conn.commit()
+
+
+def get_draft(conn: sqlite3.Connection, job_id: int):
+    return conn.execute("SELECT * FROM drafts WHERE job_id = ?", (job_id,)).fetchone()
+
+
+def drafted_job_ids(conn: sqlite3.Connection) -> set:
+    return {r["job_id"] for r in conn.execute("SELECT job_id FROM drafts")}
+
+
+# --- company-discovery suggestions (propose-only) ---------------------------
+
+def add_suggestion(conn: sqlite3.Connection, *, company, norm_name, reason,
+                   evidence_url, ats, slug, status) -> bool:
+    """Insert a proposal; no-op if this company was already proposed/dismissed.
+    Returns True if a new row was inserted."""
+    now = now_iso()
+    cur = conn.execute(
+        "INSERT INTO suggestions (company, norm_name, reason, evidence_url, ats, slug, status, first_seen, updated_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(norm_name) DO NOTHING",
+        (company, norm_name, reason, evidence_url, ats, slug, status, now, now),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def existing_suggestion_names(conn: sqlite3.Connection) -> set:
+    return {r["norm_name"] for r in conn.execute("SELECT norm_name FROM suggestions")}
+
+
+def list_suggestions(conn: sqlite3.Connection, status: Optional[str] = None):
+    if status:
+        return conn.execute("SELECT * FROM suggestions WHERE status = ? ORDER BY first_seen DESC", (status,)).fetchall()
+    return conn.execute("SELECT * FROM suggestions ORDER BY first_seen DESC").fetchall()
+
+
+def get_suggestion(conn: sqlite3.Connection, sid: int):
+    return conn.execute("SELECT * FROM suggestions WHERE id = ?", (sid,)).fetchone()
+
+
+def set_suggestion_status(conn: sqlite3.Connection, sid: int, status: str) -> None:
+    conn.execute("UPDATE suggestions SET status = ?, updated_at = ? WHERE id = ?", (status, now_iso(), sid))
+    conn.commit()

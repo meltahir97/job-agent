@@ -342,6 +342,36 @@ def cmd_digest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _strong_rows(conn, rows):
+    from .tiers import tier_for
+    return [r for r in rows if tier_for(r["fit_score"], r["label"]) == "strong"]
+
+
+def cmd_drafts(args: argparse.Namespace) -> int:
+    """Generate tailored resume + cover-letter drafts for surfaced roles (local only)."""
+    from . import drafting, website
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    try:
+        master, voice = drafting.load_profiles()
+    except FileNotFoundError as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    rows = website.select_master(conn)
+    if not args.all:
+        rows = _strong_rows(conn, rows)
+    model = config.STRONG_MODEL if args.opus else config.DEEP_MODEL
+    gen, skipped = drafting.run_drafts(conn, rows, master, voice, model=model, regenerate=args.regenerate)
+    conn.close()
+    scope = "all tiers" if args.all else "Strong matches"
+    print(f"Drafts ({scope}): {gen} generated, {skipped} already existed; {len(rows)} role(s) targeted.")
+    print(f"  -> {config.APPLICATIONS_DIR}")
+    return 0
+
+
 def cmd_feedback(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
@@ -420,6 +450,11 @@ def build_parser() -> argparse.ArgumentParser:
     dg = sub.add_parser("digest", help="Write a ranked Markdown digest to ./digests")
     _add_digest_flags(dg)
     dg.set_defaults(func=cmd_digest)
+    dr = sub.add_parser("drafts", help="Generate tailored resume + cover-letter drafts (local only)")
+    dr.add_argument("--all", action="store_true", help="draft for ALL tiers, not just Strong matches")
+    dr.add_argument("--regenerate", action="store_true", help="overwrite existing drafts")
+    dr.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for drafting")
+    dr.set_defaults(func=cmd_drafts)
     fb = sub.add_parser("feedback", help="Mark a job saved/dismissed (tunes future scoring)")
     fb.add_argument("job_id", nargs="?", type=int, help="job id (shown in the digest)")
     grp = fb.add_mutually_exclusive_group()

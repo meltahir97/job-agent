@@ -26,6 +26,8 @@ resume/
 # generated digests (keep the dir via .gitkeep)
 digests/*.md
 !digests/.gitkeep
+# generated application drafts (personal resume/cover-letter content)
+applications/
 
 # --- os / editor ---
 .DS_Store
