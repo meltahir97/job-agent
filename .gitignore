@@ -27,3 +27,6 @@ digests/*.md
 .DS_Store
 .idea/
 .vscode/
+
+# --- local agent session state ---
+.claude/

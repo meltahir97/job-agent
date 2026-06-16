@@ -76,10 +76,19 @@ class TestAshby(unittest.TestCase):
         {"id": "job_1", "title": "Corporate Strategy Lead", "location": "San Francisco Bay Area",
          "isRemote": False, "jobUrl": "https://jobs.ashbyhq.com/acme/job_1",
          "publishedAt": "2026-05-19T00:00:00Z", "descriptionPlain": "Strategy lead.",
-         "department": "Strategy", "compensation": {"compensationTierSummary": "$200K-$250K"}},
+         "department": "Strategy",
+         "compensation": {  # real Ashby shape: structured Salary component + equity (ignored)
+             "compensationTierSummary": "$200K – $250K • Offers Equity",
+             "summaryComponents": [
+                 {"compensationType": "Salary", "currencyCode": "USD",
+                  "minValue": 200000, "maxValue": 250000},
+                 {"compensationType": "EquityCashValue", "currencyCode": "USD",
+                  "minValue": None, "maxValue": None},
+             ],
+         }},
         {"id": "job_2", "title": "Remote BizOps", "location": "Remote, US", "isRemote": True,
          "jobUrl": "https://jobs.ashbyhq.com/acme/job_2", "publishedAt": "2026-05-18T00:00:00Z",
-         "descriptionHtml": "<p>BizOps.</p>", "department": "BizOps"},
+         "descriptionHtml": "<p>BizOps.</p>", "department": "BizOps"},  # no compensation
     ]
 
     def test_normalize(self):
@@ -88,9 +97,11 @@ class TestAshby(unittest.TestCase):
         self.assertEqual(a.location, "San Francisco Bay Area")
         self.assertIsNone(a.remote)
         self.assertEqual(a.description, "Strategy lead.")
-        self.assertIsNone(a.salary_min)                     # comp not a simple min/max -> null
+        # salary parsed from the structured Salary component (equity ignored)
+        self.assertEqual((a.salary_min, a.salary_max, a.salary_currency), (200000, 250000, "USD"))
         self.assertEqual(b.description, "BizOps.")           # from descriptionHtml
         self.assertTrue(b.remote)
+        self.assertIsNone(b.salary_min)                      # no compensation -> null, not invented
 
 
 class TestWorkable(unittest.TestCase):

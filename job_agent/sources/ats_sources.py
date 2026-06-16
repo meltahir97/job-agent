@@ -26,6 +26,24 @@ def _remote_from_text(*texts: Optional[str]) -> Optional[bool]:
     return None
 
 
+def _ashby_salary(comp: Optional[dict]):
+    """Extract (min, max, currency) from an Ashby compensation object.
+
+    Reads only the structured Salary component (ignores equity / bonus / cash);
+    leaves everything None when no employer-stated salary is present. Grounded:
+    values come straight from the feed, never inferred.
+    """
+    if not isinstance(comp, dict):
+        return (None, None, None)
+    comps = comp.get("summaryComponents")
+    if not isinstance(comps, list):
+        comps = []
+    for c in comps:
+        if isinstance(c, dict) and c.get("compensationType") == "Salary":
+            return (c.get("minValue"), c.get("maxValue"), c.get("currencyCode"))
+    return (None, None, None)
+
+
 class _AtsSource(JobSource):
     ats = "base"
 
@@ -102,6 +120,7 @@ class AshbySource(_AtsSource):
     def _normalize(self, raw: dict) -> Job:
         loc = raw.get("location")
         remote = True if raw.get("isRemote") else _remote_from_text(loc, raw.get("title"))
+        smin, smax, scur = _ashby_salary(raw.get("compensation"))
         return Job(
             source=self.ats,
             source_job_id=str(raw.get("id")),
@@ -111,9 +130,12 @@ class AshbySource(_AtsSource):
             remote=remote,
             description=raw.get("descriptionPlain") or html_to_text(raw.get("descriptionHtml")),
             url=raw.get("jobUrl") or raw.get("applyUrl"),
+            salary_min=smin,
+            salary_max=smax,
+            salary_currency=scur,
             posted_at=raw.get("publishedAt") or raw.get("publishedDate"),
             category=raw.get("department") or raw.get("team"),
-            raw=raw,  # Ashby comp is a nested tier structure, not a simple min/max -> salary None
+            raw=raw,  # salary parsed from compensation.summaryComponents (Salary component only)
         )
 
 

@@ -94,6 +94,19 @@ def _red_flags(raw) -> List[str]:
     return out
 
 
+def _bullets(raw) -> List[str]:
+    """Parse a stored bullets field: a JSON list, else a single non-empty string."""
+    if not raw:
+        return []
+    try:
+        v = json.loads(raw)
+        if isinstance(v, list):
+            return [str(x).strip() for x in v if str(x).strip()]
+    except (ValueError, TypeError):
+        pass
+    return [str(raw).strip()] if str(raw).strip() else []
+
+
 _BADGES = {"match": "⭐ match", "stretch": "🔭 stretch"}
 
 
@@ -114,11 +127,14 @@ def _render_row(row: sqlite3.Row) -> str:
     score = f"{row['fit_score']}/100" if row["fit_score"] is not None else "unscored"
     lines = [f"#### {row['title'] or 'Untitled role'}  ·  **{score}**  ·  {badge}"]
     lines.append("  ·  ".join(meta))
-    if row["rationale"]:
-        lines.append(f"\n**Why:** {row['rationale']}")
-    flags = _red_flags(row["red_flags"])
-    if flags:
-        lines.append(f"**Red flags:** {'; '.join(flags)}")
+    pros = _bullets(row["rationale"])
+    if pros:
+        lines.append("\n**Why it fits:**")
+        lines += [f"- {p}" for p in pros]
+    cons = _red_flags(row["red_flags"])
+    if cons:
+        lines.append("**Watch-outs:**")
+        lines += [f"- {c}" for c in cons]
     if row["url"]:
         lines.append(f"\n[Apply →]({row['url']})")
     return "\n".join(lines)

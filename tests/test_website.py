@@ -1,4 +1,5 @@
 """Offline tests for the website generator (select_master + render_html; no file writes)."""
+import json
 import unittest
 
 from job_agent import db, store, website
@@ -56,6 +57,37 @@ class TestWebsite(unittest.TestCase):
         # excluded roles absent
         self.assertNotIn("Junior PM", html)
         self.assertNotIn("Dismissed Director", html)
+
+    def test_collapsible_rows_and_filter_controls(self):
+        rows = website.select_master(self.conn)
+        html, _ = website.render_html(rows)
+        self.assertIn('<details class="role"', html)        # collapsed by default, expand on click
+        self.assertIn("<summary>", html)
+        for control in ('id="q"', 'id="f-tier"', 'id="f-co"', 'id="f-remote"', 'id="f-pay"'):
+            self.assertIn(control, html)                    # filter controls present
+        self.assertIn("<script>", html)                     # self-contained inline JS, no deps
+        self.assertIn("All companies", html)
+
+    def test_pros_cons_bullets_and_pay_and_remote(self):
+        conn = db.connect(":memory:")
+        db.init_db(conn)
+        j = Job(source="lever", source_job_id="9", title="Head of Strategy", company="Payco",
+                location="Remote, US", remote=True, url="https://p.example/9", description="d",
+                salary_min=150000, salary_max=200000, salary_currency="USD")
+        jid = store.upsert_job(conn, j)[0]
+        store.record_score(conn, jid, stage="deep", model="m", fit_score=82, label="match",
+                           rationale=json.dumps(["Owns strategy", "Bay/remote OK"]),
+                           red_flags=["Equity-heavy", "none"])
+        html, _ = website.render_html(website.select_master(conn))
+        self.assertIn("Why it fits", html)
+        self.assertIn("Owns strategy", html)
+        self.assertIn("Watch-outs", html)
+        self.assertIn("Equity-heavy", html)
+        for piece in ("$150k", "$200k", "USD"):
+            self.assertIn(piece, html)                      # pay range shown when available
+        self.assertIn('data-pay="1"', html)                 # filterable: pay disclosed
+        self.assertIn('data-remote="1"', html)              # filterable: remote
+        conn.close()
 
     def test_mark_published_clears_new(self):
         rows = website.select_master(self.conn)

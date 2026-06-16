@@ -1,4 +1,5 @@
 """Offline tests for digest selection + Markdown rendering (no model calls)."""
+import json
 import unittest
 
 from job_agent import db, digest, store
@@ -69,6 +70,22 @@ class TestDigest(unittest.TestCase):
         self.assertNotIn("; none", md)                       # trivial "none" filtered
         self.assertIn("https://example.com/1", md)           # link present
         self.assertNotIn("Too junior", md)                   # skip excluded
+
+    def test_pros_cons_render_as_bullets(self):
+        conn = db.connect(":memory:")
+        db.init_db(conn)
+        jid = store.upsert_job(conn, _job(7))[0]
+        store.record_score(conn, jid, stage="deep", model="m", fit_score=82, label="match",
+                           rationale=json.dumps(["Owns strategy", "BizDev overlap"]),
+                           red_flags=["Equity-heavy", "none"])
+        md = digest.render_markdown(digest.select_for_digest(conn, min_score=60))
+        self.assertIn("**Why it fits:**", md)
+        self.assertIn("- Owns strategy", md)
+        self.assertIn("- BizDev overlap", md)
+        self.assertIn("**Watch-outs:**", md)
+        self.assertIn("- Equity-heavy", md)
+        self.assertNotIn("- none", md)                        # trivial 'none' filtered
+        conn.close()
 
 
 if __name__ == "__main__":

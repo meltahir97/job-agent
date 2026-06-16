@@ -19,30 +19,31 @@ from .. import config, store
 from . import llm
 
 TRIAGE_SYSTEM = (
-    "You are a fast, RECALL-ORIENTED job-fit triager for one specific candidate (profile "
-    "below). Every listing is already from a company on the candidate's target watchlist, "
-    "so the bar is intentionally LOW. KEEP any role the candidate could plausibly do OR "
-    "stretch into given a background spanning corporate development, M&A, corporate strategy, "
-    "strategic planning, business development, partnerships, operations / business operations, "
-    "strategic finance, management consulting, and general management. When unsure, KEEP. "
-    "Only DROP a role that clearly requires skills the candidate lacks or is plainly "
-    "mismatched — hands-on software/ML engineering, deep technical or scientific "
-    "specialization, hardware, clinical/medical, individual-contributor quota-carrying sales, "
-    "recruiting/HR, legal/counsel, accounting, or narrow back-office operations (facilities, "
-    "payroll, logistics) — or roles far junior to a senior leader. Use ONLY the provided "
-    "fields; never invent. Return ONLY a JSON array."
+    "You are a HIGH-RECALL job-fit triager for one specific candidate (profile below) whose "
+    "background is strategy / corporate development / M&A / business development / partnerships "
+    "/ operations / strategic finance / general management. Every listing is from a company on "
+    "the candidate's target watchlist, so KEEP generously and let deep scoring judge fit. DROP "
+    "a role ONLY if it is an OBVIOUS HARD-NO — i.e. it clearly requires a fundamentally different "
+    "skill set the candidate does not have: hands-on software/ML engineering, design (UX/UI/"
+    "graphic), HR / recruiting, accounting / audit / tax, hands-on data science, customer "
+    "support / success, or content/editorial production (writing, video, art) — OR it "
+    "REQUIRES a credential the candidate lacks: a JD/law degree, MD, PhD or technical "
+    "Master's, CPA, PE license, bar admission, or active security clearance (the candidate "
+    "holds an MBA, not these). When unsure, KEEP. Use ONLY the provided fields; never "
+    "invent. Return ONLY a JSON array."
 )
 
 DEEP_SYSTEM = (
     "You are evaluating job fit for one specific candidate whose profile is given below. For "
-    "EACH provided listing produce a 0-100 fit score, a 2-3 sentence rationale citing SPECIFIC "
-    "overlap between the candidate's profile and the listing, any red flags evident in the "
-    "listing, and a label. Labels (be generous on recall): 'match' = strong, on-target fit; "
-    "'stretch' = the candidate is at least partially or aspirationally qualified (transferable "
-    "skills, an adjacent function, or a seniority step up/down); 'skip' = ONLY for roles that "
-    "are clearly NOT a fit (a fundamentally different function with no transferable overlap, or "
-    "requiring skills the candidate lacks). When torn between stretch and skip, choose stretch. "
-    "Use ONLY the provided data; never invent salary, requirements, or facts. Return ONLY a JSON array."
+    "EACH listing produce: a 0-100 fit score; a label; 'pros' (2-4 short bullets on why it "
+    "fits — specific overlap with the profile); and 'cons' (2-4 short bullets: gaps, watch-outs, "
+    "or disqualifiers). Labels (generous on recall): 'match' = strong, on-target fit; 'stretch' "
+    "= partially or aspirationally qualified; 'skip' = clearly NOT a fit. DISQUALIFY (set label "
+    "'skip', fit_score < 20, and state it in cons) any role that REQUIRES a credential the "
+    "candidate lacks — a JD/law degree, MD, PhD or technical Master's, CPA, PE license, bar "
+    "admission, or active security clearance (the candidate holds an MBA, not these). When "
+    "otherwise torn between stretch and skip, choose stretch. Use ONLY the provided data; never "
+    "invent salary, requirements, or facts. Return ONLY a JSON array."
 )
 
 PROFILE_KEYS = [
@@ -147,8 +148,9 @@ def _deep_user(jobs: List[dict]) -> str:
         f"{json.dumps(jobs, indent=2, ensure_ascii=False)}\n\n"
         "Return ONLY a JSON array, one object per listing:\n"
         '[{"id": <int exactly as given>, "fit_score": <int 0-100>, '
-        '"label": "match"|"stretch"|"skip", "rationale": "<2-3 sentences citing specific overlap>", '
-        '"red_flags": ["<concerns evident in the listing>"]}]'
+        '"label": "match"|"stretch"|"skip", '
+        '"pros": ["2-4 short bullets: why it fits"], '
+        '"cons": ["2-4 short bullets: gaps / watch-outs / disqualifiers"]}]'
     )
 
 
@@ -200,13 +202,18 @@ def deep_score(
             d = decided.get(r["id"])
             if not d:  # omitted by model or failed batch — surface for review, never fabricate
                 store.record_score(conn, r["id"], stage="deep", model=model, fit_score=None,
-                                   label="stretch", rationale="Scoring did not complete; review manually.")
+                                   label="stretch",
+                                   rationale=json.dumps(["Scoring did not complete; review manually."]))
                 continue
             score = _clamp_score(d.get("fit_score"))
             label = d.get("label") if d.get("label") in ("match", "stretch", "skip") else _label_from_score(score)
-            red = d.get("red_flags")
+            # pros stored as JSON list in `rationale`; cons stored as list in `red_flags`.
+            pros = d.get("pros") if isinstance(d.get("pros"), list) else ([d["rationale"]] if d.get("rationale") else [])
+            cons = d.get("cons") if isinstance(d.get("cons"), list) else (d.get("red_flags") if isinstance(d.get("red_flags"), list) else [])
+            pros = [str(x).strip() for x in pros if str(x).strip()]
+            cons = [str(x).strip() for x in cons if str(x).strip()]
             store.record_score(conn, r["id"], stage="deep", model=model, fit_score=score, label=label,
-                               rationale=d.get("rationale"), red_flags=red if isinstance(red, list) else None)
+                               rationale=json.dumps(pros, ensure_ascii=False), red_flags=cons or None)
             n += 1
     return n
 

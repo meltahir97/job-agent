@@ -69,6 +69,23 @@ class TestScoring(unittest.TestCase):
         self.assertIsNone(deep[j4]["fit_score"])                  # omitted -> null, never invented
         self.assertEqual(deep[j4]["label"], "stretch")            # recall: surfaced for review, not skipped
 
+    def test_deep_stores_pros_and_cons_bullets(self):
+        j1 = self.ids[0]
+        triage_result = [{"id": i, "keep": (i == j1)} for i in self.ids]
+        deep_result = [{
+            "id": j1, "fit_score": 78, "label": "match",
+            "pros": ["Owns corp dev", "Bay Area"],
+            "cons": ["Equity-heavy", ""],   # blank bullet dropped
+        }]
+        fake = mock.Mock(side_effect=[[triage_result], [deep_result]])
+        with mock.patch.object(llm, "map_json", fake):
+            scoring.run_scoring(self.conn, PROFILE, deep_model="claude-sonnet-4-6")
+        row = self.conn.execute(
+            "SELECT rationale, red_flags FROM scores WHERE stage='deep' AND job_id=?", (j1,)
+        ).fetchone()
+        self.assertEqual(json.loads(row["rationale"]), ["Owns corp dev", "Bay Area"])  # pros as JSON list
+        self.assertEqual(json.loads(row["red_flags"]), ["Equity-heavy"])               # cons; blank dropped
+
     def test_triage_fails_open_when_listing_omitted(self):
         # Model returns decisions for none of the jobs -> all kept (high recall)
         with mock.patch.object(llm, "map_json", mock.Mock(side_effect=[[[]]])):
