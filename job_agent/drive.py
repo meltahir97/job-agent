@@ -13,6 +13,7 @@ stay dependency-light.
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -20,8 +21,13 @@ from . import config
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-# What we look for. Broad on purpose; de-duped by file id.
-SEARCH_TERMS = ["resume", "cv", "cover letter", "cover_letter", "coverletter", "eltahir"]
+# Career documents we want (resumes / CVs / cover letters) vs. things that merely
+# contain the candidate's name (tax forms, offers, essays, NDAs) which must NOT feed
+# the profile. Filtering is by filename — controllable, and the final set is shown
+# to the user to confirm coverage.
+INCLUDE_RE = re.compile(r"resume|résumé|\bcv\b|cover|\bcl\b|curriculum", re.I)
+EXCLUDE_RE = re.compile(r"\bw-?9\b|\bw-?2\b|\boffer\b|essay|1099|\btax\b|\bi-?9\b|\bnda\b", re.I)
+COVER_RE = re.compile(r"cover|\bcl\b", re.I)
 
 GOOGLE_DOC = "application/vnd.google-apps.document"
 PDF = "application/pdf"
@@ -78,16 +84,20 @@ def _list(svc, q: str) -> List[dict]:
 
 
 def find_documents(svc) -> List[dict]:
-    """Resumes / CVs / cover letters shared with the SA, de-duped by id.
+    """Resumes / CVs / cover letters shared with the SA, de-duped by id, newest first.
 
-    Matches on filename terms OR full-text 'Eltahir'. Office/PDF/Doc types only
-    (skips folders, sheets, slides, images).
+    Filters text-bearing docs (Doc/PDF/docx) by filename: INCLUDE résumé/CV/cover
+    patterns, EXCLUDE tax forms / offers / essays / NDAs (which merely contain the
+    candidate's name). Folders, sheets, slides, and images are ignored.
     """
-    clauses = [f"name contains '{t}'" for t in SEARCH_TERMS] + ["fullText contains 'Eltahir'"]
-    q = "trashed = false and (" + " or ".join(clauses) + ")"
     by_id = {}
-    for f in _list(svc, q):
-        if f.get("mimeType") in (GOOGLE_DOC, PDF, DOCX, DOC_LEGACY):
+    for f in _list(svc, "trashed = false"):
+        if f.get("mimeType") not in (GOOGLE_DOC, PDF, DOCX, DOC_LEGACY):
+            continue
+        name = f.get("name", "")
+        if EXCLUDE_RE.search(name):
+            continue
+        if INCLUDE_RE.search(name):
             by_id[f["id"]] = f
     return sorted(by_id.values(), key=lambda f: f.get("modifiedTime", ""), reverse=True)
 
@@ -140,7 +150,7 @@ def fetch_text(svc, f: dict) -> str:
 
 
 def is_cover_letter(f: dict) -> bool:
-    return "cover" in str(f.get("name", "")).lower()
+    return bool(COVER_RE.search(str(f.get("name", ""))))
 
 
 def collect() -> Tuple[List[dict], List[Tuple[dict, str]]]:

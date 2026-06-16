@@ -31,9 +31,10 @@ TRIAGE_SYSTEM = (
     "graphic), HR / recruiting, accounting / audit / tax, hands-on data science, customer "
     "support / success, or content/editorial production (writing, video, art) — OR it "
     "REQUIRES a credential the candidate lacks: a JD/law degree, MD, PhD or technical "
-    "Master's, CPA, PE license, bar admission, or active security clearance (the candidate "
-    "holds an MBA, not these). When unsure, KEEP. Use ONLY the provided fields; never "
-    "invent. Return ONLY a JSON array."
+    "Master's, CPA, PE license, bar admission, or active security clearance — none of "
+    "which the candidate has (see the profile's education). An MBA is NOT a "
+    "disqualifier: treat MBA-preferred roles as a fit. When unsure, KEEP. Use ONLY the "
+    "provided fields; never invent. Return ONLY a JSON array."
 )
 
 DEEP_SYSTEM = (
@@ -48,7 +49,8 @@ DEEP_SYSTEM = (
     "= partially or aspirationally qualified; 'skip' = clearly NOT a fit. DISQUALIFY (set label "
     "'skip', fit_score < 20, and state it in cons) any role that REQUIRES a credential the "
     "candidate lacks — a JD/law degree, MD, PhD or technical Master's, CPA, PE license, bar "
-    "admission, or active security clearance (the candidate holds an MBA, not these). When "
+    "admission, or active security clearance — none of which the candidate has (see the "
+    "profile's education). An MBA is NOT a disqualifier; MBA-preferred roles still fit. When "
     "otherwise torn between stretch and skip, choose stretch. Use ONLY the provided data; never "
     "invent salary, requirements, or facts. Return ONLY a JSON array."
 )

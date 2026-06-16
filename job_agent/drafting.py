@@ -38,16 +38,19 @@ DRAFT_SYSTEM = (
     "NEVER means adding new claims. If the job wants something the candidate does not have, do "
     "NOT claim it — instead the cover letter may honestly frame transferable experience. Write "
     "the cover letter in the candidate's own VOICE (provided). A fabricated credential is a "
-    "critical failure. Return ONLY a JSON object."
+    "critical failure. NEVER mention business school, an MBA, or any graduate-school "
+    "application, admission, or plan to attend — the candidate has no graduate degree and "
+    "does not want this referenced. Return ONLY a JSON object."
 )
 
 
 def _draft_prompt(master: Dict[str, Any], voice: Dict[str, Any], job: sqlite3.Row) -> str:
     jd = (job["description"] or "")[:6000]
+    facts = {k: v for k, v in master.items() if k != "_meta"}  # drop provenance (e.g. filenames)
     return f"""Produce a tailored resume and cover letter for this candidate and job.
 
 MASTER PROFILE (the ONLY source of facts — do not go beyond it):
-{json.dumps(master, ensure_ascii=False, indent=2)[:16000]}
+{json.dumps(facts, ensure_ascii=False, indent=2)[:16000]}
 
 VOICE PROFILE (imitate this style in the cover letter):
 {json.dumps(voice, ensure_ascii=False, indent=2)[:4000]}
