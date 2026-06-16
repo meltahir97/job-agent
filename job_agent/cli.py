@@ -207,11 +207,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     processed, new = result
     print(f"   {processed} in-scope, {new} new, {store.count_jobs(conn)} total in DB.")
 
-    print("== score ==")
-    from .reasoning import profile as profile_mod, scoring
+    from . import discovery, drafting, drive, website
+    from .reasoning import master_profile as mpm, profile as profile_mod, scoring
     from .reasoning.llm import LLMError
 
     model = config.STRONG_MODEL if getattr(args, "opus", False) else config.DEEP_MODEL
+
+    print("== master profile ==")
+    try:
+        master, _voice, files = mpm.load_or_build(conn)
+        print(f"   {len(files)} Drive doc(s); threads: "
+              f"{', '.join((master.get('experience_threads') or [])[:6]) or '—'}")
+    except (drive.DriveError, LLMError, FileNotFoundError) as e:
+        print(f"   master profile unavailable ({e}); scoring will use the resume profile.")
+
+    print("== score ==")
     try:
         prof = profile_mod.load_for_scoring(conn)
         stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
@@ -219,6 +229,30 @@ def cmd_run(args: argparse.Namespace) -> int:
               f"deep-scored {stats['deep_scored']} with {model}.")
     except (LLMError, FileNotFoundError) as e:
         print(f"   skipped scoring: {e}")
+
+    if not getattr(args, "no_discover", False):
+        print("== discover ==")
+        try:
+            if discovery.should_run(conn, force=getattr(args, "force", False)):
+                d = discovery.discover(conn, profile_mod.load_for_scoring(conn), model=model)
+                print(f"   {len(d['proposed'])} proposed, {len(d['unverified'])} unverified.")
+            else:
+                print(f"   skipped (a scan ran < {config.DISCOVERY_INTERVAL_DAYS}d ago; --force to override).")
+        except (LLMError, FileNotFoundError) as e:
+            print(f"   skipped discovery: {e}")
+
+    if not getattr(args, "no_drafts", False):
+        print("== drafts ==")
+        try:
+            m2, v2 = drafting.load_profiles()
+            rows = website.select_master(conn)
+            if not getattr(args, "drafts_all", False):
+                rows = _strong_rows(conn, rows)
+            gen, skipped = drafting.run_drafts(conn, rows, m2, v2, model=model,
+                                               regenerate=getattr(args, "regenerate", False))
+            print(f"   {gen} generated, {skipped} existing ({len(rows)} targeted).")
+        except (FileNotFoundError, LLMError) as e:
+            print(f"   skipped drafts: {e}")
 
     print("== publish ==")
     _publish(conn, dry_run=getattr(args, "dry_run", False))
@@ -555,7 +589,11 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--batch", action="store_true", help="use the Batch API (cheaper, latency-tolerant)")
     r.add_argument("--dry-run", action="store_true", help="build the site locally + print; don't push or email")
     r.add_argument("--if-due", action="store_true", help="skip if a successful run happened <47h ago (for cron)")
-    r.add_argument("--force", action="store_true", help="ignore the --if-due guard")
+    r.add_argument("--force", action="store_true", help="ignore the --if-due guard (also forces discovery)")
+    r.add_argument("--no-discover", action="store_true", help="skip the weekly company-discovery step")
+    r.add_argument("--no-drafts", action="store_true", help="skip generating application drafts")
+    r.add_argument("--drafts-all", action="store_true", help="draft for ALL tiers, not just Strong matches")
+    r.add_argument("--regenerate", action="store_true", help="overwrite existing drafts")
     r.set_defaults(func=cmd_run)
 
     pub = sub.add_parser("publish", help="Rebuild + publish the website (and optional email) from scored data")

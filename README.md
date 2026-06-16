@@ -12,7 +12,7 @@ It is built in two **strictly separated** layers:
 | Layer | Code | LLM? | Job |
 |-------|------|------|-----|
 | **Data** | `job_agent/sources/*`, `job_agent/db.py` | No | Poll company ATS feeds (Greenhouse/Lever/Ashby/Workable), normalize, location-filter, store in SQLite |
-| **Reasoning** | `job_agent/reasoning/*` (via `claude-agent-sdk`) | Yes | Triage, deep-score, dedupe, and explain — **only** over records the data layer fetched |
+| **Reasoning** | `job_agent/reasoning/*` (Anthropic Messages API) | Yes | Triage, deep-score, profile synthesis, drafting, discovery — **only** over data we pass it |
 
 **Grounding guarantee:** the model scores only listings passed to it as data. It
 never invents a job, URL, salary, company, or ATS feed. Missing fields stay `null`;
@@ -23,12 +23,17 @@ companies that can't be confidently resolved are reported, not guessed.
 ## Pipeline
 
 ```
+(Google Drive resumes/cover letters -> MASTER PROFILE + voice profile)
 watchlist (ATS feeds) -> normalize -> location-filter -> dedupe
-   -> triage (haiku) -> deep-score (sonnet) -> digest (grouped by company) -> feedback
+   -> triage (haiku) -> deep-score (sonnet, vs. FULL profile)
+   -> discover new companies (web-search + verify, propose-only)
+   -> draft tailored resume + cover letter for Strong matches (local)
+   -> publish website -> email nudge -> feedback
 ```
 
 Everything is persisted to SQLite, so reruns are **incremental**: already-seen roles
-are skipped and you are never notified twice.
+are skipped and you are never notified twice. The full pipeline is one command
+(`job-agent run`); each stage is also runnable on its own.
 
 ---
 
@@ -49,7 +54,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # 2. Create a 3.12 virtualenv and install the project
 uv venv --python 3.12
 uv pip install -e .
-# (the Agent SDK bundles its Claude Code CLI transport — no extra install needed)
+# installs anthropic, requests, pypdf, pyyaml, google-api-python-client, google-auth, python-docx
 ```
 
 > Prefer stock tooling? `python3.11 -m venv .venv && source .venv/bin/activate && pip install -e .`
@@ -83,11 +88,24 @@ job-agent fetch --adzuna                     # optional: broad Adzuna keyword se
 job-agent profile
 job-agent profile --force                    # force re-parse
 
-# Triage (haiku) + deep-score (sonnet) new jobs; add --opus for opus deep-scoring
+# Build the MASTER PROFILE from ALL your Google Drive resumes/CVs/cover letters
+job-agent master-profile                     # requires Drive set up (see below)
+job-agent master-profile --force             # rebuild even if the doc set is unchanged
+
+# Triage (haiku) + deep-score (sonnet) new jobs against your FULL background
 job-agent score
 job-agent score --opus
-
 job-agent score --batch                      # cheaper Batch API (latency-tolerant)
+
+# Generate tailored resume + cover-letter drafts (local only; never published)
+job-agent drafts                             # Strong matches by default
+job-agent drafts --all --regenerate          # every tier; overwrite existing
+
+# Propose NEW target companies (web-search + verify; propose-only, weekly cadence)
+job-agent discover                           # --force to ignore the 7-day guard
+job-agent discover --list                    # show open proposals + their ids
+job-agent approve 3                          # append proposal #3 to companies.yaml
+job-agent dismiss 4                          # suppress proposal #4 from re-proposal
 
 # Publish the website (./docs/index.html) + optional email nudge
 job-agent publish
@@ -100,17 +118,19 @@ job-agent feedback 42 --dismissed --note "too junior"
 # Markdown digest (optional secondary output; tiered, NEW-only, grouped by company)
 job-agent digest
 
-# Full pipeline: fetch -> score -> publish website (+ email)
+# Full pipeline: fetch -> master-profile -> score -> discover -> drafts -> publish (+ email)
 job-agent run
-job-agent run --dry-run                       # preview the site + email, publish nothing
+job-agent run --dry-run                       # preview site + drafts + email, publish/send nothing
 job-agent run --if-due --force                # scheduled-run 47h guard / override
+job-agent run --no-discover --no-drafts       # skip the new stages for a lean run
 ```
 
 The **website** (`./docs/index.html`, published via GitHub Pages) is the primary
 output — see *Publishing* below. The Markdown `digest` is an optional secondary
-output. Both are tiered (Strong ≥ 75, Worth-a-look 55–74), grounded on real scored
+output. Both are tiered (Strong ≥ 75, Worth-a-look 30–74), grounded on real scored
 listings, and incremental (dismissed roles hidden; saved/dismissed history feeds
-future scoring).
+future scoring). The website rows are collapsed by default and expand on click, with
+client-side filters (tier / company / remote / pay) and a "drafts ready" tag.
 
 ---
 
@@ -152,6 +172,54 @@ Add or remove cities/terms there to widen or tighten the net.
 
 ---
 
+## Master profile (Google Drive)
+
+Scoring and drafting judge you against your **whole career**, not just your latest
+title. `master-profile` reads **every resume / CV / cover letter** you've shared with
+a Google service account and synthesizes them into one cached `profile/master_profile.json`
+(the union of all employers, roles, skills, achievements, and experience threads) plus
+a `voice_profile.json` (tone/phrasing, from the cover letters) used for drafting.
+
+**Grounding:** the profile may contain only facts that appear in your documents —
+nothing is invented; conflicting titles/dates are reconciled and noted in `variances`.
+
+**One-time setup:**
+
+1. Create a Google Cloud **service account**, download its JSON key, and point
+   `.env` at it: `GOOGLE_SERVICE_ACCOUNT_JSON=/abs/path/to/key.json` (git-ignored).
+2. **Enable the Drive API** for that project (Cloud Console → APIs & Services → enable
+   "Google Drive API").
+3. **Share** your resume/cover-letter folder (Viewer) with the service-account email
+   (e.g. `…@<project>.iam.gserviceaccount.com`).
+4. `job-agent master-profile` — it lists the files it found and summarizes the profile.
+
+If nothing is shared (or the API is off) the agent **stops and tells you** what to
+fix; it never silently proceeds. Scoring falls back to the resume profile when the
+master profile isn't available.
+
+## Application drafts (resume + cover letter)
+
+`job-agent drafts` generates a **tailored resume and cover letter** for each Strong
+match (`--all` for every tier), written to `./applications/<company>-<role>/` as both
+`.md` and `.docx` (editable). Facts come **only** from the master profile; the cover
+letter imitates your voice. Tailoring is selection / emphasis / rewording of true
+content — **never** an invented employer, title, date, degree, metric, or skill; JD
+requirements you don't meet are recorded as an honesty note, not faked. Drafts stay
+**local** (git-ignored, never published); the website only shows a "drafts ready" tag.
+Idempotent — already-drafted roles are skipped unless `--regenerate`.
+
+## Company discovery (propose-only)
+
+`job-agent discover` uses Claude **web search** to propose new Bay-Area media /
+entertainment / consumer companies that fit your full profile, **excludes** anything
+already on your watchlist or already proposed/dismissed, and **independently verifies**
+each candidate — resolving a real public ATS feed, or else checking the cited careers
+URL is reachable. Only verified candidates are **proposed** (with a citable source);
+the rest go to an "unverified — not proposed" bucket. **Nothing is auto-added.** Review
+proposals on the website ("🧭 Companies to consider") or `discover --list`, then
+`approve <id>` (appends to `companies.yaml`) or `dismiss <id>`. Runs at most weekly
+(`--force` overrides). Grounding: a company is never proposed on the model's word alone.
+
 ## Publishing (GitHub Pages)
 
 Each run writes a single self-contained `./docs/index.html` (inline CSS, no build
@@ -182,18 +250,21 @@ publish/email, pushing/sending nothing.
 ### Email nudge (optional)
 
 If `SMTP_USER` + `SMTP_APP_PASSWORD` (a Gmail **app password**) are in `.env`, each
-run with ≥1 new role emails a short nudge ("N new — X strong, Y worth a look; top 3;
-site link") to `NOTIFY_EMAIL` (defaults to muhammad.e.eltahir@gmail.com). 0 new → no
-email; missing creds → skipped silently. Never blocks the run.
+run emails a short nudge to `NOTIFY_EMAIL` (defaults to muhammad.e.eltahir@gmail.com):
+counts ("N new — X strong, Y worth a look"), the top 3 roles, **drafts ready for**
+those roles, and the **new company-proposal count**, plus the site link. It sends
+nothing when there are **0 new roles AND 0 proposals**; missing creds → skipped
+cleanly. Never blocks the run.
 
 ---
 
 ## Scheduling (every 2 days, launchd — macOS)
 
-`run --if-due` records a last-success timestamp and **skips if <47h since the last
-success** (so a wake-from-sleep catch-up never double-runs); `--force` overrides.
-`scripts/run_scheduled.sh` wraps it; `scripts/com.jobagent.run.plist` triggers it
-every 2 days. **Activate it yourself** (not auto-loaded):
+`run --if-due` runs the **full pipeline** (fetch → master-profile → score → discover
+→ drafts → publish → email) and **skips if <47h since the last success** (so a
+wake-from-sleep catch-up never double-runs); `--force` overrides. Discovery has its
+own weekly guard. `scripts/run_scheduled.sh` wraps it; `scripts/com.jobagent.run.plist`
+triggers it every 2 days. **Activate it** (not auto-loaded):
 
 ```bash
 cp scripts/com.jobagent.run.plist ~/Library/LaunchAgents/
@@ -215,15 +286,18 @@ launchctl unload ~/Library/LaunchAgents/com.jobagent.run.plist   # stop
 job_agent/
   config.py         paths, secrets, model names, search + location-filter config
   db.py             SQLite connection + schema init
-  schema.sql        DDL: jobs, scores, feedback, notifications, meta
+  schema.sql        DDL: jobs, scores, feedback, notifications, drafts, suggestions, meta
   models.py         Job dataclass (+ dedup fingerprint)
-  store.py          job upsert/dedup, scoring writes, seen-state, feedback
+  store.py          job upsert/dedup, scoring writes, seen-state, feedback, drafts, suggestions
   companies.py      companies.yaml loader (watchlist schema)
   queries.py        Adzuna default query set (optional --adzuna source)
   textutil.py       HTML->text + epoch->ISO helpers
   tiers.py          tier thresholds (Strong / Worth a look) — shared
+  drive.py          Google Drive (read-only) client for master-profile materials
+  drafting.py       tailored resume + cover-letter drafts (md + docx), grounded
+  discovery.py      weekly company discovery (web-search + verify, propose-only)
   website.py        self-contained GitHub Pages site (./docs/index.html)
-  notify.py         optional Gmail-SMTP nudge
+  notify.py         optional Gmail-SMTP nudge (counts + drafts + proposals)
   sources/
     base.py         JobSource interface + JobQuery (extension point)
     ats.py          public ATS HTTP layer (endpoints, raw fetch, probe)
@@ -233,9 +307,10 @@ job_agent/
     watchlist.py    WatchlistSource orchestration (default source)
     adzuna.py       AdzunaSource (optional, behind --adzuna)
   reasoning/
-    llm.py          Anthropic Messages API seam (concurrent asyncio + caching + Batch)
-    profile.py      resume -> cached structured profile
-    scoring.py      triage (haiku) + deep score (sonnet/opus)
+    llm.py          Anthropic Messages API seam (concurrent asyncio + caching + Batch + web search)
+    profile.py      resume -> cached structured profile (+ master-profile resolver)
+    master_profile.py  synthesize master + voice profile from all Drive documents
+    scoring.py      triage (haiku) + deep score (sonnet/opus) vs. full profile
   digest.py         company/tier Markdown digest + seen-state
   cli.py            command-line entrypoint
 scripts/
@@ -284,12 +359,28 @@ docs/index.html           the published website (GitHub Pages source)
   Gmail nudge, `--dry-run` gate.
 - [x] **M5 — Schedule:** `run --if-due` (47h guard) + launchd plist (every 2 days).
 
-**64 offline tests, all green.** Workable still fixture-only (no public board found).
-Markdown `digest` retained as a secondary output.
+### Final feature pass (current)
 
-**Deferred to later phases (not built yet):** resume tailoring, cover letters,
-application status tracking, inbox monitoring. **Near-term extensions:** email
-delivery of the digest; a paid aggregator source; a small web UI for feedback.
+- [x] **A0 — Master profile from Google Drive:** read-only service-account client;
+  synthesizes all resumes/CVs/cover letters into one cached master profile (+ voice
+  profile), strictly grounded, with provenance + reconciled `variances`.
+- [x] **A1 — Scoring re-pointed at the full profile:** triage + deep prompts weigh
+  every experience thread (strategy, ops, chief of staff, BD, dealmaking, analytics,
+  GM, media), not just the latest title.
+- [x] **A2 — Resume + cover-letter drafting:** per-role tailored `.md` + `.docx` from
+  the master profile in your voice; absolute grounding; local-only; idempotent.
+- [x] **B — Weekly company discovery:** web-search proposals, verified to a real feed
+  or careers page, propose-only; `approve`/`dismiss`; website "Companies to consider".
+- [x] **C — Email nudge activated:** counts + top 3 + drafts-ready + proposal count;
+  sends only when there's something new.
+- [x] **D — Schedule:** `run --if-due` now runs the full pipeline; launchd plist (2-day).
+
+**89 offline tests, all green.** Liberal filtering (Worth-a-look ≥ 30; triage drops
+only clear hard-no roles). The master profile requires the Drive API enabled +
+folder shared with the service account. Workable still fixture-only.
+
+**Deferred (not built):** application status tracking, inbox monitoring, a web UI for
+feedback/approvals.
 
 ---
 
