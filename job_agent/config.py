@@ -60,6 +60,12 @@ TARGET_DOMAINS = [
 LOCATIONS = ["San Francisco Bay Area", "Remote"]
 COUNTRY = "us"  # Adzuna country code
 
+# --- Output tiers (TUNE HERE) ----------------------------------------------
+# Roles are bucketed by fit score for the digest + website. Below TIER_LOOK_MIN
+# (and 'skip'-labelled roles) are excluded from output.
+TIER_STRONG_MIN = 75   # "Strong matches"  (fit >= 75)
+TIER_LOOK_MIN = 55     # "Worth a look"    (55 <= fit < 75)
+
 # --- Watchlist location filter (TUNE HERE) ---------------------------------
 # KEEP a job if it is in the Bay Area OR remote-inclusive of the US/California;
 # DROP only if clearly elsewhere-only; if ambiguous, KEEP with remote=None.

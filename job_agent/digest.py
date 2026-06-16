@@ -40,7 +40,7 @@ ORDER BY s.fit_score DESC, j.first_seen_at DESC
 def select_for_digest(
     conn: sqlite3.Connection,
     *,
-    min_score: int = 0,
+    min_score: int = config.TIER_LOOK_MIN,
     only_unnotified: bool = True,
     limit: Optional[int] = None,
 ) -> List[sqlite3.Row]:
@@ -112,7 +112,7 @@ def _render_row(row: sqlite3.Row) -> str:
     meta.append(f"id {row['id']}")
 
     score = f"{row['fit_score']}/100" if row["fit_score"] is not None else "unscored"
-    lines = [f"### {row['title'] or 'Untitled role'}  ·  **{score}**  ·  {badge}"]
+    lines = [f"#### {row['title'] or 'Untitled role'}  ·  **{score}**  ·  {badge}"]
     lines.append("  ·  ".join(meta))
     if row["rationale"]:
         lines.append(f"\n**Why:** {row['rationale']}")
@@ -124,41 +124,52 @@ def _render_row(row: sqlite3.Row) -> str:
     return "\n".join(lines)
 
 
+def row_company(row: sqlite3.Row) -> str:
+    return row["company"] or "Unknown company"
+
+
 def render_markdown(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None) -> str:
+    from .tiers import ORDER, TIER_BADGES, TIER_TITLES, tier_for
+
     generated_at = generated_at or datetime.now().astimezone()
-    n_companies = len({r["company"] for r in rows})
+    buckets = {t: [] for t in ORDER}
+    for r in rows:
+        t = tier_for(r["fit_score"], r["label"])
+        if t:
+            buckets[t].append(r)
+    counts = {t: len(buckets[t]) for t in ORDER}
+
     out = [
         f"# Job digest — {generated_at:%Y-%m-%d}",
         "",
-        f"_{len(rows)} role(s) at {n_companies} compan{'y' if n_companies == 1 else 'ies'} · "
-        f"grouped by company, ranked by fit · generated {generated_at:%Y-%m-%d %H:%M} by job-agent_",
+        f"_{counts['strong']} strong · {counts['look']} worth a look · "
+        f"generated {generated_at:%Y-%m-%d %H:%M} by job-agent_",
         "",
         "_Tune future runs: `job-agent feedback <id> --saved` / `--dismissed`._",
     ]
-    if not rows:
+    if not any(counts.values()):
         out += ["", "_No new qualifying roles in this run._"]
         return "\n".join(out).rstrip() + "\n"
 
-    # Group by company, preserving the global score-desc order: companies appear by
-    # their top role's score, and roles within a company stay ranked by fit.
-    groups: "dict[str, List[sqlite3.Row]]" = {}
-    for r in rows:
-        groups.setdefault(row_company(r), []).append(r)
-    for company, items in groups.items():
-        out += ["", f"## {company} ({len(items)})", ""]
+    for t in ORDER:  # tier -> company -> role, all score-desc within
+        items = buckets[t]
+        if not items:
+            continue
+        out += ["", f"## {TIER_BADGES[t]} {TIER_TITLES[t]} ({len(items)})", ""]
+        groups: "dict[str, List[sqlite3.Row]]" = {}
         for r in items:
-            out += [_render_row(r), "", "---", ""]
+            groups.setdefault(row_company(r), []).append(r)
+        for company, roles in groups.items():
+            out += [f"### {company}", ""]
+            for r in roles:
+                out += [_render_row(r), "", "---", ""]
     return "\n".join(out).rstrip() + "\n"
-
-
-def row_company(row: sqlite3.Row) -> str:
-    return row["company"] or "Unknown company"
 
 
 def write_digest(
     conn: sqlite3.Connection,
     *,
-    min_score: int = 0,
+    min_score: int = config.TIER_LOOK_MIN,
     only_unnotified: bool = True,
     limit: Optional[int] = None,
     generated_at: Optional[datetime] = None,
