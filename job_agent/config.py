@@ -43,6 +43,12 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
 
+# --- Delivery (optional email nudge + published site URL) ---
+SMTP_USER = os.environ.get("SMTP_USER")              # Gmail address
+SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD")  # Gmail app password (not your login pw)
+NOTIFY_EMAIL = os.environ.get("NOTIFY_EMAIL") or "muhammad.e.eltahir@gmail.com"
+SITE_URL = os.environ.get("SITE_URL")                # GitHub Pages URL, once enabled
+
 # --- Models (exact IDs requested) ---
 TRIAGE_MODEL = "claude-haiku-4-5"   # cheap keep/drop triage
 DEEP_MODEL = "claude-sonnet-4-6"    # default deep scoring

@@ -123,11 +123,74 @@ def cmd_fetch(args: argparse.Namespace) -> int:
     return 0
 
 
+def _git_publish(site_path) -> bool:
+    """Commit ./docs and push. Returns True only if pushed to a remote."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(["git", *a], cwd=str(config.BASE_DIR), capture_output=True, text=True)
+
+    git("add", "docs")
+    if git("diff", "--cached", "--quiet").returncode == 0:
+        print("   no site changes to commit.")
+    else:
+        git("commit", "-m", "Publish job site")
+    if not git("remote").stdout.strip():
+        print("   ! no git remote configured — site built at docs/ but NOT pushed.")
+        print("     See README → Publishing to enable GitHub Pages, then re-run `publish`.")
+        return False
+    r = git("push")
+    if r.returncode != 0:
+        print(f"   ! git push failed: {r.stderr.strip()[:200]}")
+        return False
+    print("   pushed docs/ to remote (GitHub Pages will update shortly).")
+    return True
+
+
+def _publish(conn, *, dry_run: bool):
+    """Build the site; on a real run also commit/push + email + clear NEW state."""
+    from datetime import datetime
+
+    from . import notify, website
+
+    path, stats, rows = website.build_site(conn, generated_at=datetime.now().astimezone())
+    tops = notify.top_roles(rows)
+    print(f"   site -> {path}  ({stats['strong']} strong, {stats['look']} worth a look, "
+          f"{stats['new']} new, {stats['companies']} companies)")
+    subject, body = notify.render_nudge(stats, config.SITE_URL or "", tops)
+    if dry_run:
+        print("   [dry-run] would NOT push or email. Email that WOULD send:")
+        print(f"     Subject: {subject}")
+        for line in body.splitlines():
+            print(f"     | {line}")
+        return stats
+    pushed = _git_publish(path)
+    print(f"   email: {notify.send_nudge(stats, config.SITE_URL or '', tops)}")
+    if pushed:
+        website.mark_published(conn, rows)  # clear NEW only after a successful publish
+    return stats
+
+
 def cmd_run(args: argparse.Namespace) -> int:
-    """Full pipeline. Currently: fetch (later milestones add score -> digest -> feedback)."""
+    """Full pipeline: fetch -> score -> publish (website + optional email)."""
     config.ensure_dirs()
     conn = db.connect()
     db.init_db(conn)
+
+    # Schedule guard: skip if a successful run happened recently (unless --force).
+    if getattr(args, "if_due", False) and not getattr(args, "force", False):
+        last = db.get_meta(conn, "last_success_at")
+        if last:
+            from datetime import datetime, timezone
+            try:
+                age_h = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds() / 3600
+                if age_h < 47:
+                    print(f"Skipping: last success {age_h:.1f}h ago (<47h). Use --force to override.")
+                    conn.close()
+                    return 0
+            except ValueError:
+                pass
+
     print("== fetch ==")
     if getattr(args, "adzuna", False):
         result = _run_fetch(conn, queries.default_queries(max_results=args.max, max_days_old=args.days))
@@ -147,23 +210,27 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         prof = profile_mod.load_or_build(conn)
         stats = scoring.run_scoring(conn, prof, deep_model=model, batch=getattr(args, "batch", False))
-        print(
-            f"   triaged {stats['triaged']} (kept {stats['kept']}); "
-            f"deep-scored {stats['deep_scored']} with {model}."
-        )
+        print(f"   triaged {stats['triaged']} (kept {stats['kept']}); "
+              f"deep-scored {stats['deep_scored']} with {model}.")
     except (LLMError, FileNotFoundError) as e:
         print(f"   skipped scoring: {e}")
 
-    print("== digest ==")
-    from . import digest as digest_mod
+    print("== publish ==")
+    _publish(conn, dry_run=getattr(args, "dry_run", False))
 
-    path, count, _ = digest_mod.write_digest(
-        conn, min_score=args.min_score, limit=args.limit, only_unnotified=not args.all
-    )
-    if count:
-        print(f"   wrote {count} new role(s) -> {path}")
-    else:
-        print("   no new qualifying roles to write.")
+    if not getattr(args, "dry_run", False):
+        db.set_meta(conn, "last_success_at", store.now_iso())
+    conn.close()
+    return 0
+
+
+def cmd_publish(args: argparse.Namespace) -> int:
+    """Rebuild + publish the website (and email) from already-scored data."""
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    print("== publish ==")
+    _publish(conn, dry_run=args.dry_run)
     conn.close()
     return 0
 
@@ -323,12 +390,18 @@ def build_parser() -> argparse.ArgumentParser:
     fb.add_argument("--list", action="store_true", help="list recorded feedback")
     fb.set_defaults(func=cmd_feedback)
 
-    r = sub.add_parser("run", help="Run the full pipeline end-to-end")
+    r = sub.add_parser("run", help="Full pipeline: fetch -> score -> publish (website + optional email)")
     _add_fetch_flags(r)
-    _add_digest_flags(r)
     r.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for deep scoring")
     r.add_argument("--batch", action="store_true", help="use the Batch API (cheaper, latency-tolerant)")
+    r.add_argument("--dry-run", action="store_true", help="build the site locally + print; don't push or email")
+    r.add_argument("--if-due", action="store_true", help="skip if a successful run happened <47h ago (for cron)")
+    r.add_argument("--force", action="store_true", help="ignore the --if-due guard")
     r.set_defaults(func=cmd_run)
+
+    pub = sub.add_parser("publish", help="Rebuild + publish the website (and optional email) from scored data")
+    pub.add_argument("--dry-run", action="store_true", help="build the site locally + print; don't push or email")
+    pub.set_defaults(func=cmd_publish)
 
     return p
 
