@@ -25,8 +25,27 @@ def connect(db_path: Optional[Path] = None) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _migrate(conn)
     set_meta(conn, "schema_version", SCHEMA_VERSION)
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after a table first shipped (CREATE TABLE IF NOT EXISTS
+    won't alter an existing table). Each ADD COLUMN is a no-op if already present."""
+    additions = {
+        "drafts": [
+            "ALTER TABLE drafts ADD COLUMN drive_url TEXT",
+            "ALTER TABLE drafts ADD COLUMN resume_url TEXT",
+            "ALTER TABLE drafts ADD COLUMN cover_url TEXT",
+        ],
+    }
+    for stmts in additions.values():
+        for sql in stmts:
+            try:
+                conn.execute(sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def get_meta(conn: sqlite3.Connection, key: str, default: Optional[str] = None) -> Optional[str]:

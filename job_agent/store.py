@@ -181,14 +181,19 @@ def clear_feedback(conn: sqlite3.Connection, job_id: int) -> None:
 # --- application drafts (resume + cover letter, local-only) ------------------
 
 def record_draft(conn: sqlite3.Connection, job_id: int, *, company, title, dir,
-                 resume_md, resume_docx, cover_md, cover_docx, model) -> None:
+                 resume_md=None, resume_docx=None, cover_md=None, cover_docx=None,
+                 drive_url=None, resume_url=None, cover_url=None, model=None) -> None:
     conn.execute(
-        "INSERT INTO drafts (job_id, company, title, dir, resume_md, resume_docx, cover_md, cover_docx, model, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?) "
+        "INSERT INTO drafts (job_id, company, title, dir, resume_md, resume_docx, cover_md, cover_docx, "
+        "drive_url, resume_url, cover_url, model, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?) "
         "ON CONFLICT(job_id) DO UPDATE SET company=excluded.company, title=excluded.title, dir=excluded.dir, "
         "resume_md=excluded.resume_md, resume_docx=excluded.resume_docx, cover_md=excluded.cover_md, "
-        "cover_docx=excluded.cover_docx, model=excluded.model, created_at=excluded.created_at",
-        (job_id, company, title, str(dir), str(resume_md), str(resume_docx), str(cover_md), str(cover_docx), model, now_iso()),
+        "cover_docx=excluded.cover_docx, drive_url=excluded.drive_url, resume_url=excluded.resume_url, "
+        "cover_url=excluded.cover_url, model=excluded.model, created_at=excluded.created_at",
+        (job_id, company, title, (str(dir) if dir else None),
+         (str(resume_md) if resume_md else None), (str(resume_docx) if resume_docx else None),
+         (str(cover_md) if cover_md else None), (str(cover_docx) if cover_docx else None),
+         drive_url, resume_url, cover_url, model, now_iso()),
     )
     conn.commit()
 

@@ -12,15 +12,30 @@ MASTER = {
     "experience_threads": ["Strategy", "Operations", "Chief of Staff"],
     "employers": [{"company": "Condé Nast", "titles": ["Corp Dev Manager"], "dates": "2022-2025",
                    "highlights": ["Led M&A integration"]}],
-    "skills": ["M&A", "Strategy"], "education": ["HBS MBA"],
+    "skills": ["M&A", "Strategy"], "education": ["MIT BS, Mechanical Engineering"],
 }
 VOICE = {"tone": "warm, precise", "characteristic_phrases": ["I am drawn to"], "approximate": False}
 
-FAKE_LLM = {
-    "resume_markdown": "# Muhammad Eltahir\n\n## Experience\n\n### Condé Nast — Corp Dev Manager\n- Led **M&A** integration\n\n## Education\n- HBS MBA",
-    "cover_letter_markdown": "Dear OpenAI,\n\nI am drawn to your mission. My corp-dev work fits this role.\n\nSincerely,\nMuhammad",
-    "omitted_requirements": ["10+ years enterprise SaaS"],
-}
+FAKE_DRAFT = """===RESUME===
+# Muhammad Eltahir
+
+## Experience
+
+### Condé Nast — Corp Dev Manager
+- Led **M&A** integration
+
+## Education
+- MIT BS, Mechanical Engineering
+===COVER_LETTER===
+Dear OpenAI,
+
+I am drawn to your mission. My corp-dev work fits this role.
+
+Sincerely,
+Muhammad
+===OMITTED===
+- 10+ years enterprise SaaS
+"""
 
 
 def _job(conn, company="OpenAI", title="Corp Dev Lead", sid="9"):
@@ -61,32 +76,51 @@ class TestGenerateForRole(unittest.TestCase):
         self.tmp.cleanup()
         self.conn.close()
 
-    def test_generates_files_and_is_idempotent_and_grounded_note(self):
+    def test_local_files_idempotent_and_grounded_note(self):
         job = _job(self.conn)
-        with mock.patch.object(drafting.llm, "complete_json", return_value=FAKE_LLM) as m:
-            paths = drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x")
+        with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT) as m:
+            res = drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x", to_drive=False)
         # grounding: the prompt fed the master profile as the source of facts
         prompt = m.call_args.args[0]
         self.assertIn("MASTER PROFILE", prompt)
         self.assertIn("Condé Nast", prompt)
-        # files written (md + docx for both resume + cover)
-        for key in ("resume_md", "resume_docx", "cover_md", "cover_docx"):
-            self.assertTrue(Path(paths[key]).exists(), key)
-        # honesty note (omitted requirements) recorded in the resume markdown, not invented into it
-        self.assertIn("NOT claimed", Path(paths["resume_md"]).read_text())
-        self.assertIn("10+ years enterprise SaaS", Path(paths["resume_md"]).read_text())
+        self.assertEqual(res["where"], "local")
+        folder = Path(res["folder"])
+        for name in ("resume.md", "resume.docx", "cover_letter.md", "cover_letter.docx"):
+            self.assertTrue((folder / name).exists(), name)
+        # honesty note (omitted requirements) recorded in the resume markdown, not invented in
+        resume_md = (folder / "resume.md").read_text()
+        self.assertIn("NOT claimed", resume_md)
+        self.assertIn("10+ years enterprise SaaS", resume_md)
         # persisted + idempotent
         self.assertIsNotNone(store.get_draft(self.conn, job["id"]))
-        with mock.patch.object(drafting.llm, "complete_json", side_effect=AssertionError("should skip")):
-            self.assertIsNone(drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x"))
-        # regenerate overwrites (calls the model again)
-        with mock.patch.object(drafting.llm, "complete_json", return_value=FAKE_LLM):
-            self.assertIsNotNone(drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x", regenerate=True))
+        with mock.patch.object(drafting.llm, "complete_text", side_effect=AssertionError("should skip")):
+            self.assertIsNone(drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x", to_drive=False))
+        with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT):
+            self.assertIsNotNone(drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x",
+                                                            regenerate=True, to_drive=False))
+
+    def test_drive_path_uploads_and_records_links(self):
+        job = _job(self.conn)
+        fake_svc = object()
+        with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT), \
+             mock.patch.object(drafting.drive, "build_service", return_value=fake_svc), \
+             mock.patch.object(drafting.drive, "app_folder", return_value=("parent123", True)), \
+             mock.patch.object(drafting.drive, "ensure_subfolder", return_value="sub456"), \
+             mock.patch.object(drafting.drive, "upload_doc",
+                               side_effect=[("rid", "https://docs/r"), ("cid", "https://docs/c")]):
+            res = drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x")  # to_drive default
+        self.assertEqual(res["where"], "drive")
+        self.assertIn("drive.google.com/drive/folders/sub456", res["folder"])
+        d = store.get_draft(self.conn, job["id"])
+        self.assertEqual(d["resume_url"], "https://docs/r")
+        self.assertEqual(d["cover_url"], "https://docs/c")
+        self.assertIn("sub456", d["drive_url"])
 
     def test_run_drafts_counts(self):
         rows = [_job(self.conn, company=f"Co{i}", title=f"Role {i}", sid=str(100 + i)) for i in range(2)]
-        with mock.patch.object(drafting.llm, "complete_json", return_value=FAKE_LLM):
-            gen, skipped = drafting.run_drafts(self.conn, rows, MASTER, VOICE, model="x")
+        with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT):
+            gen, skipped = drafting.run_drafts(self.conn, rows, MASTER, VOICE, model="x", to_drive=False)
         self.assertEqual((gen, skipped), (2, 0))
 
 

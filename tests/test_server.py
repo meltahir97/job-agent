@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from job_agent import config, db, server, store, website
+from job_agent import config, db, drafting, server, store, website
 from job_agent.models import Job
 
 
@@ -79,6 +79,56 @@ class TestSuggestionActions(unittest.TestCase):
         code, res = server.suggestion_action(self.conn, sid, "approve")
         self.assertEqual(code, 422)
         self.assertFalse(res["ok"])
+
+
+class TestDraftAction(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init_db(self.conn)
+        self.jid = _job(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_generates_and_returns_links(self):
+        with mock.patch.object(drafting, "load_profiles", return_value=({}, {})), \
+             mock.patch.object(drafting, "generate_for_role",
+                               return_value={"where": "drive", "folder": "https://f",
+                                             "resume_url": "https://r", "cover_url": "https://c"}):
+            code, res = server.draft_action(self.conn, self.jid)
+        self.assertEqual(code, 200)
+        self.assertEqual(res["folder"], "https://f")
+
+    def test_bad_id_404(self):
+        self.assertEqual(server.draft_action(self.conn, 999999)[0], 404)
+
+    def test_returns_existing_without_regenerating(self):
+        store.record_draft(self.conn, self.jid, company="Roku", title="X", dir="https://folder",
+                           drive_url="https://folder", resume_url="https://r", cover_url="https://c", model="m")
+        with mock.patch.object(drafting, "generate_for_role", side_effect=AssertionError("should not regen")):
+            code, res = server.draft_action(self.conn, self.jid)
+        self.assertEqual(code, 200)
+        self.assertEqual(res["folder"], "https://folder")
+        self.assertTrue(res.get("existing"))
+
+
+class TestNonMatchView(unittest.TestCase):
+    def test_other_section_and_draft_button(self):
+        conn = db.connect(":memory:")
+        db.init_db(conn)
+        j = Job(source="greenhouse", source_job_id="9", title="Random Eng Role", company="Roku",
+                location="SF", url="https://x/9", description="d")
+        jid = store.upsert_job(conn, j)[0]
+        store.record_score(conn, jid, stage="deep", model="m", fit_score=10, label="skip",
+                           rationale='["no"]', red_flags=["x"])
+        self.assertEqual(website.select_master(conn), [])                  # hidden from default view
+        allrows = website.select_all_scored(conn)
+        self.assertTrue(any(r["id"] == jid for r in allrows))             # present in all view
+        html_i, _ = website.render_html(allrows, interactive=True, include_all=True)
+        self.assertIn("Other roles", html_i)                              # non-match section
+        self.assertIn('data-kind="draft"', html_i)                        # draftable
+        self.assertIn('id="f-all"', html_i)                               # include-non-matches toggle
+        conn.close()
 
 
 class TestInteractiveRender(unittest.TestCase):

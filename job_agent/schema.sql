@@ -75,11 +75,14 @@ CREATE TABLE IF NOT EXISTS drafts (
     job_id      INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
     company     TEXT,
     title       TEXT,
-    dir         TEXT,                            -- ./applications/<company>-<role>/
+    dir         TEXT,                            -- local dir (fallback) OR Drive folder link
     resume_md   TEXT,
     resume_docx TEXT,
     cover_md    TEXT,
     cover_docx  TEXT,
+    drive_url   TEXT,                            -- Drive folder webViewLink (primary output)
+    resume_url  TEXT,                            -- Drive Google-Doc link (resume)
+    cover_url   TEXT,                            -- Drive Google-Doc link (cover letter)
     model       TEXT,
     created_at  TEXT NOT NULL
 );

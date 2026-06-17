@@ -45,7 +45,8 @@ COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH") or (BASE_DIR / "companies
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
-GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # Drive read-only key
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # Drive read/write key
+GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")  # optional: target folder for drafts
 
 # --- Discovery cadence ---
 DISCOVERY_INTERVAL_DAYS = 7  # weekly company-discovery scan (skipped if run more recently)

@@ -27,24 +27,23 @@ SELECT j.id, j.fingerprint, j.title, j.company, j.location, j.remote,
        j.salary_min, j.salary_max, j.salary_currency, j.posted_at, j.first_seen_at, j.url,
        s.fit_score, s.label, s.rationale, s.red_flags,
        (SELECT 1 FROM notifications n WHERE n.job_id = j.id) AS notified,
-       (SELECT 1 FROM drafts d WHERE d.job_id = j.id) AS drafted
+       (SELECT 1 FROM drafts d WHERE d.job_id = j.id) AS drafted,
+       (SELECT drive_url FROM drafts d WHERE d.job_id = j.id) AS draft_url
 FROM jobs j
 JOIN scores s ON s.id = (
     SELECT id FROM scores s2 WHERE s2.job_id = j.id AND s2.stage = 'deep'
     ORDER BY s2.scored_at DESC, s2.id DESC LIMIT 1
 )
 LEFT JOIN feedback f ON f.job_id = j.id
-WHERE s.label != 'skip'
-  AND COALESCE(s.fit_score, 0) >= :min_score
-  AND (f.decision IS NULL OR f.decision != 'dismissed')
+WHERE (f.decision IS NULL OR f.decision != 'dismissed')
+  {tier_filter}
 ORDER BY s.fit_score DESC, j.first_seen_at DESC
 """
 
+_TIER_FILTER = "AND s.label != 'skip' AND COALESCE(s.fit_score, 0) >= :min_score"
 
-def select_master(conn: sqlite3.Connection, min_score: Optional[int] = None) -> List[sqlite3.Row]:
-    """All tier-worthy roles, deduped by fingerprint (best score per role)."""
-    min_score = config.TIER_LOOK_MIN if min_score is None else min_score
-    rows = conn.execute(_SELECT, {"min_score": min_score}).fetchall()
+
+def _dedup(rows):
     seen, out = set(), []
     for r in rows:
         if r["fingerprint"] in seen:
@@ -52,6 +51,20 @@ def select_master(conn: sqlite3.Connection, min_score: Optional[int] = None) -> 
         seen.add(r["fingerprint"])
         out.append(r)
     return out
+
+
+def select_master(conn: sqlite3.Connection, min_score: Optional[int] = None) -> List[sqlite3.Row]:
+    """All tier-worthy roles, deduped by fingerprint (best score per role)."""
+    min_score = config.TIER_LOOK_MIN if min_score is None else min_score
+    sql = _SELECT.format(tier_filter=_TIER_FILTER)
+    return _dedup(conn.execute(sql, {"min_score": min_score}).fetchall())
+
+
+def select_all_scored(conn: sqlite3.Connection) -> List[sqlite3.Row]:
+    """Every deep-scored role (incl. non-matches / skip / low fit), minus dismissed —
+    so the user can draft for roles the agent didn't flag as a match."""
+    sql = _SELECT.format(tier_filter="")
+    return _dedup(conn.execute(sql).fetchall())
 
 
 _CSS = """
@@ -76,7 +89,7 @@ details.role>summary{list-style:none;cursor:pointer;padding:9px 12px;display:fle
 details.role>summary::-webkit-details-marker{display:none}
 details.role>summary:hover{background:#fafaf8}
 .fit{font-weight:700;font-variant-numeric:tabular-nums;border-radius:7px;padding:2px 7px;font-size:13px;color:#fff;flex:none}
-.fit.s{background:var(--strong)}.fit.l{background:var(--look)}
+.fit.s{background:var(--strong)}.fit.l{background:var(--look)}.fit.o{background:#9aa0a6}
 .t{font-weight:600}.co{color:var(--muted)}.sp{flex:1 1 12px}
 .m{color:var(--muted);font-size:12.5px}.pay{color:var(--strong);font-weight:600;font-size:12.5px}
 .new{background:var(--new);color:#fff;border-radius:5px;padding:1px 6px;font-size:10.5px;font-weight:700}
@@ -95,6 +108,7 @@ footer{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid va
 .btn{font:600 11px/1 -apple-system,system-ui,sans-serif;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;color:var(--ink)}
 .btn:hover{background:#f3f3f1}.btn.rej:hover{border-color:var(--new);color:var(--new)}
 .btn.sav:hover{border-color:var(--strong);color:var(--strong)}.btn.app{border-color:var(--strong);color:var(--strong)}
+.btn.draft:hover{border-color:var(--accent);color:var(--accent)}.draftlink{text-decoration:none;border-color:var(--accent);color:var(--accent)}.draftlink:hover{background:#eef4ff}
 .btn[disabled]{opacity:.5;cursor:default}.savedtag{color:var(--strong);font-weight:700;font-size:12px}
 details.role.is-saved{box-shadow:0 0 0 2px var(--strong) inset}
 details.role.removing,.sug.removing{opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s}
@@ -155,6 +169,15 @@ _ACTIONS_JS = """
         else if(act==='save'){ card.classList.add('is-saved'); b.parentNode.innerHTML='<span class="savedtag">Saved \\u2713</span> <button class="btn" data-kind="job" data-id="'+id+'" data-act="undo">undo</button>'; }
         else if(act==='undo'){ location.reload(); }
       });
+    } else if(b.dataset.kind==='draft'){
+      var jid=b.dataset.id; b.disabled=true; b.textContent='Drafting…';
+      post('/api/job/'+jid+'/draft').then(function(res){
+        if(!res.ok){ b.disabled=false; b.textContent='retry'; return; }
+        if(!/^https?:/.test(res.folder||'')){ b.textContent='Saved locally'; b.disabled=true; return; }
+        var a=document.createElement('a'); a.className='btn draftlink'; a.href=res.folder;
+        a.target='_blank'; a.rel='noopener'; a.textContent='📄 Drafts';
+        b.replaceWith(a);
+      });
     } else if(b.dataset.kind==='sug'){
       var wrap=b.closest('.sug'), sid=wrap.dataset.id, act=b.dataset.act, msg=wrap.querySelector('.sugmsg');
       if(act==='approve' && !wrap.dataset.ats && !wrap.querySelector('.slugform')){ revealForm(wrap); return; }
@@ -167,6 +190,8 @@ _ACTIONS_JS = """
       });
     }
   });
+  var fa=document.getElementById('f-all');
+  if(fa){ fa.addEventListener('change',function(){ var p=new URLSearchParams(location.search); if(fa.checked){p.set('all','1');}else{p.delete('all');} location.search=p.toString(); }); }
 })();
 """
 
@@ -181,7 +206,8 @@ def _attr(s: str) -> str:
 
 def _card(row: sqlite3.Row, interactive: bool = False) -> str:
     tier = tier_for(row["fit_score"], row["label"])
-    fit_cls = "s" if tier == "strong" else "l"
+    fit_cls = {"strong": "s", "look": "l"}.get(tier, "o")
+    data_tier = tier or "other"
     fit = row["fit_score"] if row["fit_score"] is not None else "—"
     loc = row["location"] or ""
     pay = _salary(row)
@@ -191,7 +217,7 @@ def _card(row: sqlite3.Row, interactive: bool = False) -> str:
 
     summary_meta = "  ·  ".join(m for m in (html.escape(loc), f'posted {_date(row["posted_at"])}' if row["posted_at"] else "") if m)
     s = [
-        f'<details class="role" data-tier="{tier}" data-co="{_attr(row["company"] or "")}" '
+        f'<details class="role" data-tier="{data_tier}" data-co="{_attr(row["company"] or "")}" '
         f'data-remote="{1 if row["remote"] else 0}" data-pay="{1 if pay else 0}" data-text="{_attr(text)}">',
         "<summary>",
         f'<span class="fit {fit_cls}">{fit}</span>',
@@ -208,11 +234,17 @@ def _card(row: sqlite3.Row, interactive: bool = False) -> str:
     if is_new:
         s.append('<span class="new">NEW</span>')
     if interactive:
+        if row["draft_url"]:
+            draft_el = (f'<a class="btn draftlink" href="{html.escape(row["draft_url"])}" target="_blank" '
+                        'rel="noopener" title="Open the drafts in Google Drive">📄 Drafts</a>')
+        else:
+            draft_el = (f'<button class="btn draft" data-kind="draft" data-id="{row["id"]}" '
+                        'title="Write a tailored resume + cover letter to Drive">✎ Draft</button>')
         s.append(
-            '<span class="acts">'
-            f'<button class="btn rej" data-kind="job" data-id="{row["id"]}" data-act="reject" title="Hide this role">Reject</button>'
-            f'<button class="btn sav" data-kind="job" data-id="{row["id"]}" data-act="save" title="Mark interesting">Save</button>'
-            "</span>"
+            '<span class="acts">' + draft_el
+            + f'<button class="btn rej" data-kind="job" data-id="{row["id"]}" data-act="reject" title="Hide this role">Reject</button>'
+            + f'<button class="btn sav" data-kind="job" data-id="{row["id"]}" data-act="save" title="Mark interesting">Save</button>'
+            + "</span>"
         )
     s.append("</summary>")
     s.append('<div class="body">')
@@ -270,10 +302,11 @@ def _suggestions_section(suggestions, interactive: bool = False) -> str:
 
 
 def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None,
-                suggestions=None, interactive: bool = False) -> Tuple[str, dict]:
+                suggestions=None, interactive: bool = False, include_all: bool = False) -> Tuple[str, dict]:
     generated_at = generated_at or datetime.now().astimezone()
     buckets = {t: [r for r in rows if tier_for(r["fit_score"], r["label"]) == t] for t in ORDER}
-    companies = sorted({r["company"] for r in rows if tier_for(r["fit_score"], r["label"]) and r["company"]})
+    other = [r for r in rows if tier_for(r["fit_score"], r["label"]) is None]
+    companies = sorted({r["company"] for r in rows if r["company"]})
     stats = {
         "strong": len(buckets["strong"]),
         "look": len(buckets["look"]),
@@ -291,6 +324,13 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
             f'<section class="tier" data-tier="{t}"><h2 class="tier">{TIER_BADGES[t]} {TIER_TITLES[t]} '
             f'<span style="color:var(--muted);font-weight:400">({len(items)})</span></h2>{cards}</section>'
         )
+    if other:  # non-matches (only present when the app's "include non-matches" view is on)
+        cards = "".join(_card(r, interactive) for r in other)
+        sections.append(
+            '<section class="tier" data-tier="other"><h2 class="tier">🗂️ Other roles '
+            f'<span style="color:var(--muted);font-weight:400">— not flagged as matches ({len(other)})</span>'
+            f"</h2>{cards}</section>"
+        )
     body = "".join(sections) or '<p class="m">No in-scope roles yet — run the pipeline.</p>'
     consider = _suggestions_section(suggestions or [], interactive)
     co_opts = "".join(f'<option value="{_attr(c)}">{html.escape(c)}</option>' for c in companies)
@@ -300,8 +340,10 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
         scripts = f"<script>{_JS}</script><script>{_ACTIONS_JS}</script>"
     else:
         help_html = ('This published page is read-only. Open the local app (<code>job-agent serve</code>) '
-                     'for one-click Reject / Save / Approve buttons.')
+                     'for one-click Reject / Save / Approve / Draft buttons.')
         scripts = f"<script>{_JS}</script>"
+    nonmatch_toggle = (f'<label><input type="checkbox" id="f-all"{" checked" if include_all else ""}> '
+                       "Include non-matches</label>" if interactive else "")
 
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -317,6 +359,7 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
 <select id="f-co"><option value="">All companies</option>{co_opts}</select>
 <label><input type="checkbox" id="f-remote"> Remote only</label>
 <label><input type="checkbox" id="f-pay"> Pay shown</label>
+{nonmatch_toggle}
 </div>
 <div id="count"></div>
 <p class="help">{help_html}</p>

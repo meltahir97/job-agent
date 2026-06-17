@@ -579,6 +579,40 @@ def cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_draft(args: argparse.Namespace) -> int:
+    """Draft a tailored resume + cover letter for ONE job by id — even a non-match."""
+    from . import drafting
+    from .reasoning.llm import LLMError
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    job = store.get_job(conn, args.id)
+    if not job:
+        print(f"error: no job with id {args.id} (ids show when you expand a row on the site)")
+        conn.close()
+        return 2
+    try:
+        master, voice = drafting.load_profiles()
+        res = drafting.generate_for_role(
+            conn, job, master, voice,
+            model=(config.STRONG_MODEL if args.opus else config.DEEP_MODEL),
+            regenerate=args.regenerate,
+        )
+    except (FileNotFoundError, LLMError) as e:
+        print(f"error: {e}")
+        conn.close()
+        return 2
+    conn.close()
+    if res is None:
+        print(f"Already drafted (use --regenerate): [{args.id}] {job['title']} @ {job['company']}")
+    elif res.get("where") == "drive":
+        print(f"Drafted to Drive: {job['title']} @ {job['company']}\n  {res['folder']}")
+    else:
+        print(f"Drafted locally: {res['folder']}")
+    return 0
+
+
 def cmd_feedback(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
@@ -657,11 +691,16 @@ def build_parser() -> argparse.ArgumentParser:
     dg = sub.add_parser("digest", help="Write a ranked Markdown digest to ./digests")
     _add_digest_flags(dg)
     dg.set_defaults(func=cmd_digest)
-    dr = sub.add_parser("drafts", help="Generate tailored resume + cover-letter drafts (local only)")
+    dr = sub.add_parser("drafts", help="Generate tailored resume + cover-letter drafts (to Drive)")
     dr.add_argument("--all", action="store_true", help="draft for ALL tiers, not just Strong matches")
     dr.add_argument("--regenerate", action="store_true", help="overwrite existing drafts")
     dr.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for drafting")
     dr.set_defaults(func=cmd_drafts)
+    df = sub.add_parser("draft", help="Draft for ONE job by id — even one not flagged as a match")
+    df.add_argument("id", type=int, help="job id (shown when you expand a row on the site)")
+    df.add_argument("--regenerate", action="store_true", help="overwrite an existing draft")
+    df.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for drafting")
+    df.set_defaults(func=cmd_draft)
     disc = sub.add_parser("discover", help="Propose NEW target companies (web-search + verify; propose-only)")
     disc.add_argument("--force", action="store_true", help="run even if a scan happened in the last week")
     disc.add_argument("--opus", action="store_true", help="use claude-opus-4-8 for discovery")

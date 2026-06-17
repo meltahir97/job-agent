@@ -50,10 +50,34 @@ def suggestion_action(conn, sid: int, action: str, ats=None, slug=None) -> Tuple
     return 400, {"ok": False, "error": f"unknown action {action!r}"}
 
 
-def render_page(conn) -> str:
-    rows = website.select_master(conn)
+def draft_action(conn, job_id: int) -> Tuple[int, dict]:
+    """Generate (or return existing) Drive drafts for ANY job — including roles not
+    flagged as a match. Synchronous (one LLM call); fine under ThreadingHTTPServer."""
+    from . import drafting
+
+    job = store.get_job(conn, job_id)
+    if not job:
+        return 404, {"ok": False, "error": f"no job with id {job_id}"}
+    existing = store.get_draft(conn, job_id)
+    if existing and existing["drive_url"]:
+        return 200, {"ok": True, "folder": existing["drive_url"], "resume_url": existing["resume_url"],
+                     "cover_url": existing["cover_url"], "existing": True}
+    try:
+        master, voice = drafting.load_profiles()
+    except FileNotFoundError as e:
+        return 422, {"ok": False, "error": str(e)}
+    try:
+        res = drafting.generate_for_role(conn, job, master, voice, regenerate=True)
+    except drafting.llm.LLMError as e:
+        return 500, {"ok": False, "error": str(e)}
+    return 200, {"ok": True, "folder": res.get("folder"), "resume_url": res.get("resume_url"),
+                 "cover_url": res.get("cover_url"), "where": res.get("where")}
+
+
+def render_page(conn, include_all: bool = False) -> str:
+    rows = website.select_all_scored(conn) if include_all else website.select_master(conn)
     suggestions = store.list_suggestions(conn, "proposed")
-    page, _ = website.render_html(rows, suggestions=suggestions, interactive=True)
+    page, _ = website.render_html(rows, suggestions=suggestions, interactive=True, include_all=include_all)
     return page
 
 
@@ -72,10 +96,14 @@ class _Handler(BaseHTTPRequestHandler):
             pass  # client navigated away / refreshed mid-response — harmless
 
     def do_GET(self):  # noqa: N802
-        if self.path in ("/", "/index.html"):
+        from urllib.parse import parse_qs, urlparse
+
+        parsed = urlparse(self.path)
+        if parsed.path in ("/", "/index.html"):
+            include_all = parse_qs(parsed.query).get("all", ["0"])[0] in ("1", "true", "yes")
             conn = db.connect()
             try:
-                html = render_page(conn)
+                html = render_page(conn, include_all)
             finally:
                 conn.close()
             self._send(200, html, "text/html; charset=utf-8")
@@ -92,7 +120,9 @@ class _Handler(BaseHTTPRequestHandler):
             body = {}
         conn = db.connect()
         try:
-            if len(parts) == 4 and parts[0] == "api" and parts[1] == "job":
+            if len(parts) == 4 and parts[0] == "api" and parts[1] == "job" and parts[3] == "draft":
+                code, res = draft_action(conn, int(parts[2]))
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "job":
                 code, res = job_action(conn, int(parts[2]), parts[3])
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "suggestion":
                 code, res = suggestion_action(conn, int(parts[2]), parts[3], body.get("ats"), body.get("slug"))
