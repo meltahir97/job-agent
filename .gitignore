@@ -4,6 +4,10 @@
 job-agent-*.json
 *service-account*.json
 *service_account*.json
+# Google OAuth client secret + cached user token (NEVER commit)
+client_secret*.json
+*oauth*client*.json
+google_oauth_token.json
 
 # --- python ---
 __pycache__/

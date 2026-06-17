@@ -102,16 +102,15 @@ class TestGenerateForRole(unittest.TestCase):
 
     def test_drive_path_uploads_and_records_links(self):
         job = _job(self.conn)
-        fake_svc = object()
+        links = {"folder": "https://drive.google.com/drive/folders/sub456",
+                 "resume_url": "https://docs/r", "cover_url": "https://docs/c"}
         with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT), \
-             mock.patch.object(drafting.drive, "build_service", return_value=fake_svc), \
-             mock.patch.object(drafting.drive, "app_folder", return_value=("parent123", True)), \
-             mock.patch.object(drafting.drive, "ensure_subfolder", return_value="sub456"), \
-             mock.patch.object(drafting.drive, "upload_doc",
-                               side_effect=[("rid", "https://docs/r"), ("cid", "https://docs/c")]):
+             mock.patch.object(drafting.oauth, "upload_drafts", return_value=links) as up:
             res = drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x")  # to_drive default
         self.assertEqual(res["where"], "drive")
-        self.assertIn("drive.google.com/drive/folders/sub456", res["folder"])
+        self.assertIn("sub456", res["folder"])
+        # the docx bytes (not markdown) were handed to the uploader
+        self.assertEqual(up.call_args.args[1], job["company"])
         d = store.get_draft(self.conn, job["id"])
         self.assertEqual(d["resume_url"], "https://docs/r")
         self.assertEqual(d["cover_url"], "https://docs/c")

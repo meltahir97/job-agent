@@ -117,7 +117,10 @@ job-agent publish
 job-agent publish --dry-run                   # build locally + print; don't push/email
 job-agent publish --no-email                  # push the site but don't email
 
-# Local interactive app — the site with working Reject/Save/Approve BUTTONS (no terminal)
+# One-time Google sign-in so drafts write to YOUR Drive (OAuth; see Drive setup below)
+job-agent auth
+
+# Local interactive app — the site with working Reject/Save/Approve/Draft BUTTONS (no terminal)
 job-agent serve                               # opens http://127.0.0.1:8765
 
 # Mark a job saved/dismissed (feeds future scoring); ids are shown in the site/digest
@@ -219,11 +222,15 @@ don't meet are noted, not faked.
   Drive folder). Works for *any* role — flip on **Include non-matches** to draft for
   roles the agent didn't flag. Auto for Strong matches via `job-agent drafts` (`--all`
   for every tier); one role via `job-agent draft <id>`; `--regenerate` to overwrite.
-- **Drive setup (one-time):** a service account has no storage of its own, so create a
-  folder in your Drive (e.g. "Job Applications") and share it **Editor** with the
-  service-account email — drafts then land there, owned by you. (Set
-  `GOOGLE_DRIVE_FOLDER_ID` to pin a specific folder.) If no writable folder is shared,
-  drafts fall back to local `./applications/<company>-<role>/` (git-ignored).
+- **Drive setup (one-time, ~3 min):** drafts are written to *your* Drive via a one-time
+  Google sign-in — a service account can't own files on a personal account, so writes act
+  as **you** (minimal `drive.file` scope: the agent only ever touches files it creates).
+  In the Cloud Console create an **OAuth client ID → Desktop app**, download its JSON, set
+  `GOOGLE_OAUTH_CLIENT_SECRET` in `.env`, then run **`job-agent auth`** and click *Allow*
+  once. After that, drafts are editable Google Docs in a "Job Applications" folder in your
+  Drive and the token auto-refreshes (publish the consent screen to avoid a 7-day testing
+  expiry). Until you sign in, drafts fall back to local `./applications/<company>-<role>/`
+  (git-ignored). Reads (your existing resumes) still use the read-only service account.
 
 ## Company discovery (propose-only)
 

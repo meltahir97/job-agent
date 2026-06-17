@@ -45,8 +45,11 @@ COMPANIES_PATH = Path(os.environ.get("COMPANIES_PATH") or (BASE_DIR / "companies
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID")
 ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY")
-GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # Drive read/write key
+GOOGLE_SERVICE_ACCOUNT_JSON = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")  # Drive read-only (resumes)
 GOOGLE_DRIVE_FOLDER_ID = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")  # optional: target folder for drafts
+# User OAuth (writing drafts to YOUR Drive — service accounts can't own files on personal Gmail).
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")  # path to the Desktop client JSON
+GOOGLE_OAUTH_TOKEN_PATH = Path(os.environ.get("GOOGLE_OAUTH_TOKEN_PATH") or (PROFILE_DIR / "google_oauth_token.json"))
 
 # --- Discovery cadence ---
 DISCOVERY_INTERVAL_DAYS = 7  # weekly company-discovery scan (skipped if run more recently)

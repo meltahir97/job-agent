@@ -264,6 +264,21 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auth(args: argparse.Namespace) -> int:
+    """One-time Google sign-in so drafts can be written to YOUR Drive."""
+    from . import oauth
+
+    config.ensure_dirs()
+    try:
+        email = oauth.run_auth_flow()
+    except oauth.OAuthError as e:
+        print(f"error: {e}")
+        return 2
+    print(f"✓ Signed in as {email}. Drafts will now be written to your Google Drive.")
+    print(f"  Token saved to {config.GOOGLE_OAUTH_TOKEN_PATH} (auto-refreshes; no need to repeat).")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     """Run the local interactive web app (the site with working buttons)."""
     from . import server
@@ -757,6 +772,8 @@ def build_parser() -> argparse.ArgumentParser:
     srv.add_argument("--port", type=int, default=8765, help="localhost port (default 8765)")
     srv.add_argument("--no-open", action="store_true", help="don't auto-open the browser")
     srv.set_defaults(func=cmd_serve)
+    au = sub.add_parser("auth", help="One-time Google sign-in so drafts write to YOUR Drive (OAuth)")
+    au.set_defaults(func=cmd_auth)
 
     return p
 

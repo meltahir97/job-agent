@@ -17,14 +17,12 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from . import config, db
+from . import config
 
-# Read-write: we read the user's shared resumes/cover letters AND write generated
-# drafts back into a Drive folder. Resource access is still gated by what's shared
-# with the service account (and which folder it can write to).
-SCOPES = ["https://www.googleapis.com/auth/drive"]
-
-FOLDER_MIME = "application/vnd.google-apps.folder"
+# Read-only: the service account READS the resumes/cover letters shared with it (for
+# the master profile). Writing drafts is done as the USER via OAuth (see oauth.py) —
+# a service account can't own files on a personal Google account.
+SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 # Career documents we want (resumes / CVs / cover letters) vs. things that merely
 # contain the candidate's name (tax forms, offers, essays, NDAs) which must NOT feed
@@ -156,84 +154,6 @@ def fetch_text(svc, f: dict) -> str:
 
 def is_cover_letter(f: dict) -> bool:
     return bool(COVER_RE.search(str(f.get("name", ""))))
-
-
-_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-_FOLDER_HINT = re.compile(r"job|application|resume|cover", re.I)
-
-
-def _find_writable_folder(svc) -> Optional[str]:
-    """A folder the SA can write into (user shared it as Editor). Prefer a job-ish name."""
-    res = svc.files().list(
-        q=f"mimeType='{FOLDER_MIME}' and trashed=false",
-        fields="files(id,name,capabilities(canAddChildren))",
-        pageSize=200, supportsAllDrives=True, includeItemsFromAllDrives=True,
-    ).execute()
-    writable = [f for f in res.get("files", []) if (f.get("capabilities") or {}).get("canAddChildren")]
-    if not writable:
-        return None
-    for f in writable:  # prefer an obviously-relevant folder
-        if _FOLDER_HINT.search(f.get("name", "")):
-            return f["id"]
-    return writable[0]["id"]
-
-
-def app_folder(conn, svc) -> Tuple[str, bool]:
-    """Resolve the destination folder for drafts (a folder the user owns and shared as
-    Editor — service accounts have no storage quota, so they can only write into a
-    user-owned folder). Returns (folder_id, True). Raises DriveError with setup
-    instructions if no writable folder is available."""
-    fid = config.GOOGLE_DRIVE_FOLDER_ID
-    if fid:
-        return fid, True
-    fid = _find_writable_folder(svc)
-    if fid:
-        db.set_meta(conn, "drive_app_folder_id", fid)
-        return fid, True
-    sa = service_account_email() or "the service account"
-    raise DriveError(
-        "No Drive folder is shared with write access. In Google Drive, create a folder "
-        f"(e.g. 'Job Applications') and share it as **Editor** with {sa}, then re-run — "
-        "drafts will be written there (owned by you). Saving locally for now."
-    )
-
-
-def ensure_subfolder(svc, parent_id: str, name: str) -> str:
-    safe = name.replace("'", " ")
-    res = svc.files().list(
-        q=f"mimeType='{FOLDER_MIME}' and trashed=false and name='{safe}' and '{parent_id}' in parents",
-        fields="files(id)", pageSize=1, supportsAllDrives=True, includeItemsFromAllDrives=True,
-    ).execute()
-    found = res.get("files", [])
-    if found:
-        return found[0]["id"]
-    folder = svc.files().create(
-        body={"name": name, "mimeType": FOLDER_MIME, "parents": [parent_id]},
-        fields="id", supportsAllDrives=True,
-    ).execute()
-    return folder["id"]
-
-
-def upload_doc(svc, name: str, docx_bytes: bytes, parent_id: str) -> Tuple[str, str]:
-    """Upload a .docx and convert it to an editable Google Doc in parent_id.
-    Replaces any existing Doc of the same name in that folder. Returns (id, webViewLink)."""
-    from googleapiclient.http import MediaIoBaseUpload
-
-    existing = svc.files().list(
-        q=f"name='{name.replace(chr(39), ' ')}' and '{parent_id}' in parents and trashed=false",
-        fields="files(id)", pageSize=10, supportsAllDrives=True, includeItemsFromAllDrives=True,
-    ).execute().get("files", [])
-    for f in existing:
-        try:
-            svc.files().delete(fileId=f["id"], supportsAllDrives=True).execute()
-        except Exception:
-            pass
-    media = MediaIoBaseUpload(io.BytesIO(docx_bytes), mimetype=_DOCX_MIME, resumable=False)
-    created = svc.files().create(
-        body={"name": name, "mimeType": GOOGLE_DOC, "parents": [parent_id]},
-        media_body=media, fields="id,webViewLink", supportsAllDrives=True,
-    ).execute()
-    return created["id"], created.get("webViewLink", "")
 
 
 def collect() -> Tuple[List[dict], List[Tuple[dict, str]]]:

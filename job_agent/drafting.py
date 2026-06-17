@@ -17,7 +17,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from . import config, drive, store
+from . import config, oauth, store
 from .reasoning import llm
 
 def load_profiles() -> Tuple[Dict[str, Any], Dict[str, Any]]:
@@ -203,18 +203,14 @@ def generate_for_role(
 
     if to_drive:
         try:
-            svc = drive.build_service()
-            parent, user_owned = drive.app_folder(conn, svc)
-            sub = drive.ensure_subfolder(svc, parent, f"{company} — {title}"[:120])
-            _, r_url = drive.upload_doc(svc, f"Resume — {company} — {title}"[:200], md_to_docx_bytes(resume_md), sub)
-            _, c_url = drive.upload_doc(svc, f"Cover Letter — {company} — {title}"[:200], md_to_docx_bytes(cover_md), sub)
-            folder_link = f"https://drive.google.com/drive/folders/{sub}"
-            store.record_draft(conn, job["id"], company=company, title=title, dir=folder_link,
-                               drive_url=folder_link, resume_url=r_url, cover_url=c_url, model=model)
-            return {"where": "drive", "folder": folder_link, "resume_url": r_url,
-                    "cover_url": c_url, "user_owned": user_owned}
-        except drive.DriveError as e:
-            print(f"   (Drive unavailable — {e}; saving locally instead.)")
+            links = oauth.upload_drafts(conn, company, title,
+                                        md_to_docx_bytes(resume_md), md_to_docx_bytes(cover_md))
+            store.record_draft(conn, job["id"], company=company, title=title, dir=links["folder"],
+                               drive_url=links["folder"], resume_url=links["resume_url"],
+                               cover_url=links["cover_url"], model=model)
+            return {"where": "drive", **links}
+        except oauth.OAuthError as e:
+            print(f"   (Drive sign-in needed — {e} Saving locally for now.)")
         except Exception as e:  # never lose the generated draft over a Drive hiccup
             print(f"   (Drive upload failed — {e}; saving locally instead.)")
 
