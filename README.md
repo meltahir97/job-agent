@@ -115,6 +115,10 @@ job-agent save 42                            # mark a role interesting; teaches 
 # Publish the website (./docs/index.html) + optional email nudge
 job-agent publish
 job-agent publish --dry-run                   # build locally + print; don't push/email
+job-agent publish --no-email                  # push the site but don't email
+
+# Local interactive app — the site with working Reject/Save/Approve BUTTONS (no terminal)
+job-agent serve                               # opens http://127.0.0.1:8765
 
 # Mark a job saved/dismissed (feeds future scoring); ids are shown in the site/digest
 job-agent feedback 42 --saved
@@ -226,17 +230,33 @@ proposals on the website ("🧭 Companies to consider") or `discover --list`, th
 for a guided pass. Runs at most weekly (`--force` overrides). Grounding: a company is
 never proposed on the model's word alone.
 
-## Acting on results (reject / save / approve)
+## Acting on results — buttons, no terminal
 
-The published page is **read-only** (static GitHub Pages), so you act from your terminal —
-each role's id shows when you expand its row. The easiest path is **`job-agent review`**,
-a guided pass over open company proposals (approve/dismiss) and undecided roles
-(save/reject) with no ids to remember. Or act directly: **`job-agent reject <id>`** hides a
-role from the site on the next publish, and **`job-agent save <id>`** flags one you like.
-Both are remembered (the `feedback` table) and **fed into future deep-scoring** — so the
-agent learns what to surface and what to skip on later runs. (`reject`/`save` are friendly
-aliases for `feedback <id> --dismissed/--saved`.) Rejected roles stay in the DB marked
-dismissed, so they're filtered out and never re-added.
+Run the local app and just click:
+
+```bash
+job-agent serve        # opens http://127.0.0.1:8765 with working buttons
+```
+
+Every role has **Reject** (hide it) and **Save** (flag it) buttons; every company proposal
+has **Approve** / **Dismiss**. Clicks write straight to the database and update the page
+instantly. (GitHub Pages is static and can't receive a click, so this small app serves the
+same page from your Mac, bound to localhost only — no auth, single user.)
+
+**Always-on (never touch the terminal again):** load the serve agent once and the app runs
+in the background at a permanent bookmark:
+
+```bash
+cp scripts/com.jobagent.serve.plist ~/Library/LaunchAgents/
+launchctl load   ~/Library/LaunchAgents/com.jobagent.serve.plist   # always live at :8765
+launchctl unload ~/Library/LaunchAgents/com.jobagent.serve.plist   # stop it
+```
+
+**It learns:** Reject/Save are remembered (the `feedback` table) and fed into future
+deep-scoring, so the agent gets better at what it surfaces. Rejected roles are hidden and
+never re-added. The published GitHub Pages page stays as a read-only mirror (handy on a
+phone). Terminal equivalents also exist: `job-agent review` (guided), `reject <id>`,
+`save <id>`, `approve <id>`, `dismiss <id>`.
 
 ## Publishing (GitHub Pages)
 
@@ -314,7 +334,8 @@ job_agent/
   drive.py          Google Drive (read-only) client for master-profile materials
   drafting.py       tailored resume + cover-letter drafts (md + docx), grounded
   discovery.py      weekly company discovery (web-search + verify, propose-only)
-  website.py        self-contained GitHub Pages site (./docs/index.html)
+  website.py        self-contained site (static for Pages; interactive for the local app)
+  server.py         local interactive web app (the site with working buttons)
   notify.py         optional Gmail-SMTP nudge (counts + drafts + proposals)
   sources/
     base.py         JobSource interface + JobQuery (extension point)
@@ -332,8 +353,9 @@ job_agent/
   digest.py         company/tier Markdown digest + seen-state
   cli.py            command-line entrypoint
 scripts/
-  run_scheduled.sh        launchd wrapper (run --if-due)
-  com.jobagent.run.plist  launchd job (every 2 days)
+  run_scheduled.sh           launchd wrapper (run --if-due)
+  com.jobagent.run.plist     launchd job: full pipeline every 2 days
+  com.jobagent.serve.plist   launchd job: always-on local app (buttons) at :8765
 docs/index.html           the published website (GitHub Pages source)
 ```
 

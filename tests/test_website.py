@@ -91,8 +91,8 @@ class TestWebsite(unittest.TestCase):
 
     def test_review_and_reject_affordances(self):
         rows = website.select_master(self.conn)
-        html, _ = website.render_html(rows)
-        self.assertIn("job-agent review", html)                       # help banner
+        html, _ = website.render_html(rows)                          # static (read-only) page
+        self.assertIn("job-agent serve", html)                       # banner points to the local app
         jid = self.ids[1]                                            # a surfaced role
         self.assertIn(f"job-agent reject {jid}", html)               # per-row reject command
         self.assertIn(f"job-agent save {jid}", html)

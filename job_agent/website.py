@@ -91,6 +91,17 @@ details.role>summary:hover{background:#fafaf8}
 .sug .cmd{font-size:12px;color:var(--muted);margin-top:4px}
 .sug code{background:#f0f0ee;border-radius:4px;padding:1px 5px;font-size:12px}
 footer{margin-top:40px;color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:12px}
+.acts{display:inline-flex;gap:4px;margin-left:4px;flex:none}
+.btn{font:600 11px/1 -apple-system,system-ui,sans-serif;border:1px solid var(--line);background:#fff;border-radius:6px;padding:4px 9px;cursor:pointer;color:var(--ink)}
+.btn:hover{background:#f3f3f1}.btn.rej:hover{border-color:var(--new);color:var(--new)}
+.btn.sav:hover{border-color:var(--strong);color:var(--strong)}.btn.app{border-color:var(--strong);color:var(--strong)}
+.btn[disabled]{opacity:.5;cursor:default}.savedtag{color:var(--strong);font-weight:700;font-size:12px}
+details.role.is-saved{box-shadow:0 0 0 2px var(--strong) inset}
+details.role.removing,.sug.removing{opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s}
+.sugact{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap}
+.slugform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%;margin-top:6px}
+.slugform input,.slugform select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px}
+.sugmsg{font-size:12px;color:var(--new)}
 @media(max-width:520px){.t{flex-basis:100%}}
 """
 
@@ -118,7 +129,44 @@ _JS = """
     cnt.textContent=shown+' role'+(shown===1?'':'s')+' shown';
   }
   [q,ft,fc,fr,fp].forEach(function(el){el.addEventListener('input',apply);});
+  window.applyFilters=apply;
   apply();
+})();
+"""
+
+# Only included by the local interactive app (job-agent serve); posts decisions to the API.
+_ACTIONS_JS = """
+(function(){
+  function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(function(r){return r.json();});}
+  function revealForm(wrap){
+    var f=document.createElement('div'); f.className='slugform';
+    f.innerHTML='<select class="f-ats"><option value="greenhouse">greenhouse</option><option value="lever">lever</option><option value="ashby">ashby</option><option value="workable">workable</option><option value="smartrecruiters">smartrecruiters</option><option value="workday">workday</option></select> <input class="f-slug" placeholder="board slug"> <button class="btn app" data-kind="sug" data-act="approve">Add</button>';
+    wrap.querySelector('.sugact').appendChild(f);
+  }
+  document.addEventListener('click',function(e){
+    var b=e.target.closest('button.btn'); if(!b) return;
+    e.preventDefault(); e.stopPropagation();
+    if(b.dataset.kind==='job'){
+      var id=b.dataset.id, act=b.dataset.act, card=b.closest('details.role');
+      b.disabled=true;
+      post('/api/job/'+id+'/'+act).then(function(res){
+        if(!res.ok){b.disabled=false; b.textContent='retry'; return;}
+        if(act==='reject'){ card.classList.add('removing'); setTimeout(function(){card.remove(); if(window.applyFilters)window.applyFilters();},220); }
+        else if(act==='save'){ card.classList.add('is-saved'); b.parentNode.innerHTML='<span class="savedtag">Saved \\u2713</span> <button class="btn" data-kind="job" data-id="'+id+'" data-act="undo">undo</button>'; }
+        else if(act==='undo'){ location.reload(); }
+      });
+    } else if(b.dataset.kind==='sug'){
+      var wrap=b.closest('.sug'), sid=wrap.dataset.id, act=b.dataset.act, msg=wrap.querySelector('.sugmsg');
+      if(act==='approve' && !wrap.dataset.ats && !wrap.querySelector('.slugform')){ revealForm(wrap); return; }
+      var body={}, form=wrap.querySelector('.slugform');
+      if(act==='approve' && form){ body.ats=form.querySelector('.f-ats').value; body.slug=form.querySelector('.f-slug').value.trim(); if(!body.slug){ if(msg)msg.textContent='enter a slug'; return; } }
+      b.disabled=true;
+      post('/api/suggestion/'+sid+'/'+act,body).then(function(res){
+        if(!res.ok){ b.disabled=false; if(msg)msg.textContent=(res.message||res.error||'error'); return; }
+        wrap.classList.add('removing'); setTimeout(function(){wrap.remove();},220);
+      });
+    }
+  });
 })();
 """
 
@@ -131,7 +179,7 @@ def _attr(s: str) -> str:
     return html.escape(s or "", quote=True)
 
 
-def _card(row: sqlite3.Row) -> str:
+def _card(row: sqlite3.Row, interactive: bool = False) -> str:
     tier = tier_for(row["fit_score"], row["label"])
     fit_cls = "s" if tier == "strong" else "l"
     fit = row["fit_score"] if row["fit_score"] is not None else "—"
@@ -159,6 +207,13 @@ def _card(row: sqlite3.Row) -> str:
         s.append('<span class="drafts">drafts ready</span>')
     if is_new:
         s.append('<span class="new">NEW</span>')
+    if interactive:
+        s.append(
+            '<span class="acts">'
+            f'<button class="btn rej" data-kind="job" data-id="{row["id"]}" data-act="reject" title="Hide this role">Reject</button>'
+            f'<button class="btn sav" data-kind="job" data-id="{row["id"]}" data-act="save" title="Mark interesting">Save</button>'
+            "</span>"
+        )
     s.append("</summary>")
     s.append('<div class="body">')
     if pros:
@@ -168,13 +223,14 @@ def _card(row: sqlite3.Row) -> str:
     s.append(f'<p class="m">id {row["id"]} · first seen {_date(row["first_seen_at"])}</p>')
     if row["url"]:
         s.append(f'<a class="apply" href="{html.escape(row["url"])}" target="_blank" rel="noopener">Apply →</a>')
-    s.append(f'<p class="act">Not a fit? <code>job-agent reject {row["id"]}</code> · '
-             f'Interested? <code>job-agent save {row["id"]}</code></p>')
+    if not interactive:  # static page: show the terminal commands (buttons handle it in the local app)
+        s.append(f'<p class="act">Not a fit? <code>job-agent reject {row["id"]}</code> · '
+                 f'Interested? <code>job-agent save {row["id"]}</code></p>')
     s.append("</div></details>")
     return "".join(s)
 
 
-def _suggestions_section(suggestions) -> str:
+def _suggestions_section(suggestions, interactive: bool = False) -> str:
     """'Companies to consider' — propose-only discovery results with cited evidence."""
     if not suggestions:
         return ""
@@ -183,26 +239,38 @@ def _suggestions_section(suggestions) -> str:
         board = f'{s["ats"]}:{s["slug"]}' if s["ats"] else "careers page"
         ev = s["evidence_url"] or ""
         link = f' · <a href="{html.escape(ev)}" target="_blank" rel="noopener">source ↗</a>' if ev else ""
+        if interactive:
+            action = (
+                '<div class="sugact">'
+                '<button class="btn app" data-kind="sug" data-act="approve" title="Add to watchlist">Approve</button>'
+                '<button class="btn dis" data-kind="sug" data-act="dismiss" title="Hide this proposal">Dismiss</button>'
+                '<span class="sugmsg"></span></div>'
+            )
+        else:
+            action = (f'<div class="cmd">approve <code>job-agent approve {s["id"]}</code> · '
+                      f'dismiss <code>job-agent dismiss {s["id"]}</code></div>')
         cards.append(
-            '<div class="sug">'
+            f'<div class="sug" data-id="{s["id"]}" data-ats="{_attr(s["ats"] or "")}" data-slug="{_attr(s["slug"] or "")}">'
             f'<div><b>{html.escape(s["company"])}</b> <span class="m">{html.escape(board)}</span>{link}</div>'
             f'<div class="m">{html.escape(s["reason"] or "")}</div>'
-            f'<div class="cmd">approve <code>job-agent approve {s["id"]}</code> · '
-            f'dismiss <code>job-agent dismiss {s["id"]}</code></div>'
-            "</div>"
+            f'{action}</div>'
         )
+    note = ("Verified to a real feed or careers page. Click <b>Approve</b> to add one to your "
+            "watchlist (you'll be asked for a board slug if it has no auto-detected feed), or "
+            "<b>Dismiss</b> to hide it. Nothing is added automatically."
+            if interactive else
+            "Proposed by weekly discovery — verified to a real feed or careers page. In your "
+            "terminal, run <code>job-agent approve &lt;id&gt;</code> to add one or "
+            "<code>job-agent dismiss &lt;id&gt;</code> to hide it. Nothing is added automatically.")
     return (
         '<section class="consider"><h2 class="tier">🧭 Companies to consider '
         f'<span style="color:var(--muted);font-weight:400">({len(suggestions)})</span></h2>'
-        '<p class="m">Proposed by weekly discovery — verified to a real feed or careers page. '
-        "In your terminal, run <code>job-agent approve &lt;id&gt;</code> to add one to your "
-        "watchlist or <code>job-agent dismiss &lt;id&gt;</code> to hide it. Nothing is added "
-        "automatically.</p>"
-        + "".join(cards) + "</section>"
+        f'<p class="m">{note}</p>' + "".join(cards) + "</section>"
     )
 
 
-def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None, suggestions=None) -> Tuple[str, dict]:
+def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None,
+                suggestions=None, interactive: bool = False) -> Tuple[str, dict]:
     generated_at = generated_at or datetime.now().astimezone()
     buckets = {t: [r for r in rows if tier_for(r["fit_score"], r["label"]) == t] for t in ORDER}
     companies = sorted({r["company"] for r in rows if tier_for(r["fit_score"], r["label"]) and r["company"]})
@@ -218,14 +286,22 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
         items = buckets[t]
         if not items:
             continue
-        cards = "".join(_card(r) for r in items)
+        cards = "".join(_card(r, interactive) for r in items)
         sections.append(
             f'<section class="tier" data-tier="{t}"><h2 class="tier">{TIER_BADGES[t]} {TIER_TITLES[t]} '
             f'<span style="color:var(--muted);font-weight:400">({len(items)})</span></h2>{cards}</section>'
         )
     body = "".join(sections) or '<p class="m">No in-scope roles yet — run the pipeline.</p>'
-    consider = _suggestions_section(suggestions or [])
+    consider = _suggestions_section(suggestions or [], interactive)
     co_opts = "".join(f'<option value="{_attr(c)}">{html.escape(c)}</option>' for c in companies)
+    if interactive:
+        help_html = ('Click <b>Reject</b> to hide a role or <b>Save</b> to flag it (both teach future '
+                     'scoring), and <b>Approve</b>/<b>Dismiss</b> a company below — changes save instantly.')
+        scripts = f"<script>{_JS}</script><script>{_ACTIONS_JS}</script>"
+    else:
+        help_html = ('This published page is read-only. Open the local app (<code>job-agent serve</code>) '
+                     'for one-click Reject / Save / Approve buttons.')
+        scripts = f"<script>{_JS}</script>"
 
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
@@ -243,11 +319,11 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
 <label><input type="checkbox" id="f-pay"> Pay shown</label>
 </div>
 <div id="count"></div>
-<p class="help">Act from your terminal (the page is read-only): <code>job-agent review</code> walks you through everything. Or per row, expand it for its id and run <code>job-agent reject &lt;id&gt;</code> (hide &amp; teach scoring) or <code>job-agent save &lt;id&gt;</code>. For companies below: <code>job-agent approve &lt;id&gt;</code> / <code>job-agent dismiss &lt;id&gt;</code>.</p>
+<p class="help">{help_html}</p>
 <main>{body}</main>
 {consider}
 <footer>Generated by job-agent — grounded on real scored listings. Tiers: Strong ≥ {config.TIER_STRONG_MIN}, Worth a look {config.TIER_LOOK_MIN}–{config.TIER_STRONG_MIN - 1}. Click a row to expand.</footer>
-<script>{_JS}</script>
+{scripts}
 </div></body></html>
 """
     return page, stats

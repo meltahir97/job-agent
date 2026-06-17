@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jobagent.serve</string>
+
+    <!-- Always-on local web app: the site with working Reject/Save/Approve buttons,
+         bound to 127.0.0.1:8765. Bookmark http://127.0.0.1:8765/ — no terminal needed. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/muhammadeltahir/Projects/Job Search/.venv/bin/python</string>
+        <string>-m</string>
+        <string>job_agent</string>
+        <string>serve</string>
+        <string>--no-open</string>
+        <string>--port</string>
+        <string>8765</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search</string>
+
+    <!-- Start at login and keep it running (restart if it ever exits). -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search/data/serve.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/muhammadeltahir/Projects/Job Search/data/serve.err.log</string>
+</dict>
+</plist>

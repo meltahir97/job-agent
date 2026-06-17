@@ -264,6 +264,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the local interactive web app (the site with working buttons)."""
+    from . import server
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)  # ensure schema exists before first request
+    conn.close()
+    return server.serve(port=args.port, open_browser=not args.no_open)
+
+
 def cmd_publish(args: argparse.Namespace) -> int:
     """Rebuild + publish the website (and email) from already-scored data."""
     config.ensure_dirs()
@@ -703,6 +714,10 @@ def build_parser() -> argparse.ArgumentParser:
     pub.add_argument("--dry-run", action="store_true", help="build the site locally + print; don't push or email")
     pub.add_argument("--no-email", action="store_true", help="push the site but don't send the email nudge")
     pub.set_defaults(func=cmd_publish)
+    srv = sub.add_parser("serve", help="Run the local interactive app (the site with working buttons)")
+    srv.add_argument("--port", type=int, default=8765, help="localhost port (default 8765)")
+    srv.add_argument("--no-open", action="store_true", help="don't auto-open the browser")
+    srv.set_defaults(func=cmd_serve)
 
     return p
 

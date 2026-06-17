@@ -172,6 +172,12 @@ def decided_job_ids(conn: sqlite3.Connection) -> set:
     return {r["job_id"] for r in conn.execute("SELECT job_id FROM feedback")}
 
 
+def clear_feedback(conn: sqlite3.Connection, job_id: int) -> None:
+    """Remove a saved/dismissed decision (undo)."""
+    conn.execute("DELETE FROM feedback WHERE job_id = ?", (job_id,))
+    conn.commit()
+
+
 # --- application drafts (resume + cover letter, local-only) ------------------
 
 def record_draft(conn: sqlite3.Connection, job_id: int, *, company, title, dir,
