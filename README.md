@@ -208,14 +208,22 @@ master profile isn't available.
 
 ## Application drafts (resume + cover letter)
 
-`job-agent drafts` generates a **tailored resume and cover letter** for each Strong
-match (`--all` for every tier), written to `./applications/<company>-<role>/` as both
-`.md` and `.docx` (editable). Facts come **only** from the master profile; the cover
-letter imitates your voice. Tailoring is selection / emphasis / rewording of true
-content — **never** an invented employer, title, date, degree, metric, or skill; JD
-requirements you don't meet are recorded as an honesty note, not faked. Drafts stay
-**local** (git-ignored, never published); the website only shows a "drafts ready" tag.
-Idempotent — already-drafted roles are skipped unless `--regenerate`.
+Tailored **resume + cover letter** per role, written to your **Google Drive** as
+editable Google Docs (in a per-role subfolder). Facts come **only** from the master
+profile; the cover letter imitates your voice. Tailoring is selection / emphasis /
+rewording of true content — **never** an invented employer, title, date, degree,
+metric, or skill (and never an MBA / business-school reference); JD requirements you
+don't meet are noted, not faked.
+
+- **In the app:** click **✎ Draft** on any role (it becomes a **📄 Drafts** link to the
+  Drive folder). Works for *any* role — flip on **Include non-matches** to draft for
+  roles the agent didn't flag. Auto for Strong matches via `job-agent drafts` (`--all`
+  for every tier); one role via `job-agent draft <id>`; `--regenerate` to overwrite.
+- **Drive setup (one-time):** a service account has no storage of its own, so create a
+  folder in your Drive (e.g. "Job Applications") and share it **Editor** with the
+  service-account email — drafts then land there, owned by you. (Set
+  `GOOGLE_DRIVE_FOLDER_ID` to pin a specific folder.) If no writable folder is shared,
+  drafts fall back to local `./applications/<company>-<role>/` (git-ignored).
 
 ## Company discovery (propose-only)
 
