@@ -45,10 +45,16 @@ DRAFT_SYSTEM = (
 )
 
 
+def _contact_line(master: Dict[str, Any]) -> str:
+    c = master.get("contact") or {}
+    parts = [c.get("email") or config.NOTIFY_EMAIL, c.get("phone"), c.get("location"), c.get("linkedin")]
+    return "  ·  ".join(p for p in parts if p)
+
+
 def _draft_prompt(master: Dict[str, Any], voice: Dict[str, Any], job: sqlite3.Row) -> str:
     jd = (job["description"] or "")[:6000]
     facts = {k: v for k, v in master.items() if k != "_meta"}  # drop provenance (e.g. filenames)
-    return f"""Produce a tailored resume and cover letter for this candidate and job.
+    return f"""Produce a tailored, ONE-PAGE resume and a cover letter for this candidate and job.
 
 MASTER PROFILE (the ONLY source of facts — do not go beyond it):
 {json.dumps(facts, ensure_ascii=False, indent=2)[:16000]}
@@ -63,21 +69,40 @@ JOB:
   Description:
   \"\"\"{jd}\"\"\"
 
-Return plain text in EXACTLY this structure, using these literal marker lines (no JSON, no code fences):
+Return plain text with these EXACT marker lines (no JSON, no Markdown #/**, no code fences):
 
 ===RESUME===
-<a complete, ATS-friendly resume in Markdown, built ONLY from the master profile, reordered/emphasized for THIS job: name + contact line + summary + experience (most relevant employers and bullets first) + skills + education>
+NAME: <full name>
+CONTACT: {_contact_line(master)}
+## EXPERIENCE
+@ <Company> :: <start – end dates>
+> <Title> :: <optional title-specific dates>
+- <achievement bullet with the real metric>
+- <bullet>
+@ <Company> :: <dates>
+> <Title>
+- <bullet>
+## EDUCATION
+@ <School> :: <year>
+> <Degree>
+## SKILLS
+- <8–14 skills separated by '  ·  ' on ONE line>
 
 ===COVER_LETTER===
-<a one-page cover letter in the candidate's voice, addressed to {job['company']}, connecting their REAL experience to this role; no invented facts>
+<one-page cover letter in the candidate's voice, addressed to {job['company']}; plain paragraphs separated by blank lines>
 
 ===OMITTED===
-<one bullet "- ..." per JD requirement the candidate does NOT clearly meet, so nothing was fabricated to cover it; or the single word: none>
+- <a JD requirement the candidate does NOT clearly meet> (or the single word: none)
 
-Rules:
-- Every employer, title, date, degree, metric, and skill MUST exist in the master profile.
-- Prefer the candidate's real numbers exactly as written. Do not inflate.
-- If unsure whether a fact is supported, leave it out."""
+CRITICAL rules:
+- ONE PAGE. The resume MUST fit on a single page. Keep ~12–16 bullets TOTAL: 3–4 for the most
+  relevant/recent roles, 1–2 for older ones, and OMIT minor/old roles (brief internships,
+  volunteer/student roles) when needed to fit. Skills on ONE line.
+- Use the marker structure EXACTLY: NAME:, CONTACT:, '## SECTION', '@ Org :: Dates',
+  '> Title :: Dates', '- bullet'. One item per line. Do NOT use '#' headings or '**' bold.
+- Keep the CONTACT line exactly as given.
+- Grounding: every employer, title, date, degree, metric, and skill MUST appear in the master
+  profile, with real numbers exactly as written. Never invent. No business-school / MBA mention."""
 
 
 _SECTION_RE = re.compile(r"^===\s*(RESUME|COVER[_ ]?LETTER|OMITTED)\s*===\s*$", re.I | re.M)
@@ -153,6 +178,132 @@ def md_to_docx_bytes(md: str) -> bytes:
     return buf.getvalue()
 
 
+# --- résumé / cover-letter renderers (match the candidate's Garamond one-pager) ----
+
+GARAMOND = "Garamond"
+_PAGE_W_IN = 8.5
+
+
+def _tight(p, before=0.0, after=0.0, line=1.0):
+    pf = p.paragraph_format
+    pf.space_before = _Pt(before)
+    pf.space_after = _Pt(after)
+    pf.line_spacing = line
+    return p
+
+
+def _run(p, text, size=11.0, bold=False, italic=False):
+    r = p.add_run(text)
+    r.font.name = GARAMOND
+    r.font.size = _Pt(size)
+    r.bold, r.italic = bold, italic
+    return r
+
+
+def _Pt(v):
+    from docx.shared import Pt
+    return Pt(v)
+
+
+def _bottom_border(p):
+    """Thin rule under a section header (like the reference resume)."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    pPr = p._p.get_or_add_pPr()
+    pbdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    for k, v in (("w:val", "single"), ("w:sz", "6"), ("w:space", "1"), ("w:color", "808080")):
+        bottom.set(qn(k), v)
+    pbdr.append(bottom)
+    pPr.append(pbdr)
+
+
+def build_resume_docx(struct: str):
+    """Render the structured resume block into a Garamond one-pager matching the
+    candidate's format: 22pt centered name, centered contact, 13pt underlined uppercase
+    section headers, bold company + right-aligned dates, italic titles, tight bullets."""
+    import docx
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+    from docx.shared import Inches
+
+    doc = docx.Document()
+    normal = doc.styles["Normal"]
+    normal.font.name, normal.font.size = GARAMOND, _Pt(11)
+    sec = doc.sections[0]
+    sec.top_margin, sec.bottom_margin = Inches(0.35), Inches(0.35)
+    sec.left_margin, sec.right_margin = Inches(0.7), Inches(0.7)
+    content_w = Inches(_PAGE_W_IN - 0.7 - 0.7)
+
+    def right_tab(p):
+        p.paragraph_format.tab_stops.add_tab_stop(content_w, WD_TAB_ALIGNMENT.RIGHT)
+
+    for raw in struct.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            continue
+        if line.startswith("NAME:"):
+            p = _tight(doc.add_paragraph(), after=1); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(p, line[5:].strip(), size=22)
+        elif line.startswith("CONTACT:"):
+            p = _tight(doc.add_paragraph(), after=5); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            _run(p, line[8:].strip(), size=10.5)
+        elif line.startswith("SUMMARY:"):
+            _run(_tight(doc.add_paragraph(), after=2), line[8:].strip(), size=11, italic=True)
+        elif line.startswith("## "):
+            p = _tight(doc.add_paragraph(), before=7, after=2)
+            _run(p, line[3:].strip().upper(), size=13, bold=True)
+            _bottom_border(p)
+        elif line.startswith("@ "):
+            org, _, dates = line[2:].partition("::")
+            p = _tight(doc.add_paragraph(), before=3); right_tab(p)
+            _run(p, org.strip(), bold=True)
+            if dates.strip():
+                _run(p, "\t" + dates.strip())
+        elif line.startswith("> "):
+            role, _, dates = line[2:].partition("::")
+            p = _tight(doc.add_paragraph()); right_tab(p)
+            _run(p, role.strip(), italic=True)
+            if dates.strip():
+                _run(p, "\t" + dates.strip(), italic=True)
+        elif line.lstrip().startswith(("- ", "* ")):
+            p = _tight(doc.add_paragraph(), after=1)
+            p.paragraph_format.left_indent = Inches(0.23)
+            p.paragraph_format.first_line_indent = Inches(-0.13)
+            _run(p, "•  " + line.lstrip()[2:].strip())
+        else:
+            _run(_tight(doc.add_paragraph()), line.strip())
+    return doc
+
+
+def build_cover_docx(text: str):
+    """Render the cover letter in Garamond, business-letter spacing, one page."""
+    import docx
+    from docx.shared import Inches
+
+    doc = docx.Document()
+    normal = doc.styles["Normal"]
+    normal.font.name, normal.font.size = GARAMOND, _Pt(11)
+    sec = doc.sections[0]
+    sec.top_margin = sec.bottom_margin = Inches(0.8)
+    sec.left_margin = sec.right_margin = Inches(1.0)
+    for block in re.split(r"\n\s*\n", text.strip()):
+        if not block.strip():
+            continue
+        p = _tight(doc.add_paragraph(), after=8, line=1.08)
+        for i, ln in enumerate(block.split("\n")):
+            if i:
+                p.add_run().add_break()
+            _run(p, ln.strip())
+    return doc
+
+
+def _docx_bytes(doc) -> bytes:
+    import io
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 _SLUG = re.compile(r"[^a-z0-9]+")
 
 
@@ -174,8 +325,8 @@ def _save_local(conn, job, company, title, resume_md, cover_md, omitted, model) 
         resume_full += "\n\n<!-- JD requirements NOT claimed (no fabrication): " + "; ".join(map(str, omitted)) + " -->\n"
     paths["resume_md"].write_text(resume_full, encoding="utf-8")
     paths["cover_md"].write_text(cover_md, encoding="utf-8")
-    md_to_docx(resume_md, paths["resume_docx"])
-    md_to_docx(cover_md, paths["cover_docx"])
+    build_resume_docx(resume_md).save(str(paths["resume_docx"]))
+    build_cover_docx(cover_md).save(str(paths["cover_docx"]))
     store.record_draft(conn, job["id"], company=company, title=title, dir=str(d),
                        resume_md=paths["resume_md"], resume_docx=paths["resume_docx"],
                        cover_md=paths["cover_md"], cover_docx=paths["cover_docx"], model=model)
@@ -204,7 +355,8 @@ def generate_for_role(
     if to_drive:
         try:
             links = oauth.upload_drafts(conn, company, title,
-                                        md_to_docx_bytes(resume_md), md_to_docx_bytes(cover_md))
+                                        _docx_bytes(build_resume_docx(resume_md)),
+                                        _docx_bytes(build_cover_docx(cover_md)))
             store.record_draft(conn, job["id"], company=company, title=title, dir=links["folder"],
                                drive_url=links["folder"], resume_url=links["resume_url"],
                                cover_url=links["cover_url"], model=model)

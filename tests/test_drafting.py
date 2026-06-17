@@ -17,15 +17,17 @@ MASTER = {
 VOICE = {"tone": "warm, precise", "characteristic_phrases": ["I am drawn to"], "approximate": False}
 
 FAKE_DRAFT = """===RESUME===
-# Muhammad Eltahir
-
-## Experience
-
-### Condé Nast — Corp Dev Manager
-- Led **M&A** integration
-
-## Education
-- MIT BS, Mechanical Engineering
+NAME: Muhammad Eltahir
+CONTACT: muhammad.e.eltahir@gmail.com  ·  New York, NY
+## EXPERIENCE
+@ Condé Nast :: Jul 2021 – Present
+> Corp Dev Manager
+- Led M&A integration
+## EDUCATION
+@ MIT :: 2019
+> B.S. Mechanical Engineering
+## SKILLS
+- M&A  ·  Strategy
 ===COVER_LETTER===
 Dear OpenAI,
 

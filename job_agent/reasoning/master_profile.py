@@ -61,6 +61,7 @@ def _master_prompt(docs: List[Tuple[dict, str]]) -> str:
 Return ONLY a JSON object with exactly this shape:
 {{
   "name": string|null,
+  "contact": {{"email": string|null, "phone": string|null, "location": "City, ST"|null, "linkedin": string|null}},
   "seniority": one of ["IC","Manager","Director","VP","C-level"],
   "years_experience": number|null,
   "summary": string,                         // 3-4 sentence professional summary spanning the WHOLE career
@@ -80,6 +81,7 @@ Return ONLY a JSON object with exactly this shape:
 }}
 
 Rules:
+- Extract contact details (email, phone, current city/state, LinkedIn) from the documents for the resume header.
 - UNION, not latest-only: include experience from EVERY document, even older roles.
 - Use ONLY facts present in the documents. Do NOT invent or embellish anything.
 - Keep real metrics exactly as written. If a field is unknown, use null or [].
