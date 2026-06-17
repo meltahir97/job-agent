@@ -167,6 +167,11 @@ def list_feedback(conn: sqlite3.Connection):
     ).fetchall()
 
 
+def decided_job_ids(conn: sqlite3.Connection) -> set:
+    """Job ids that already have a saved/dismissed decision (skip them in review)."""
+    return {r["job_id"] for r in conn.execute("SELECT job_id FROM feedback")}
+
+
 # --- application drafts (resume + cover letter, local-only) ------------------
 
 def record_draft(conn: sqlite3.Connection, job_id: int, *, company, title, dir,

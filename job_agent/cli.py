@@ -147,7 +147,7 @@ def _git_publish(site_path) -> bool:
     return True
 
 
-def _publish(conn, *, dry_run: bool):
+def _publish(conn, *, dry_run: bool, email: bool = True):
     """Build the site; on a real run also commit/push + email + clear NEW state."""
     from datetime import datetime
 
@@ -168,9 +168,10 @@ def _publish(conn, *, dry_run: bool):
             print(f"     | {line}")
         return stats
     pushed = _git_publish(path)
-    email_status = notify.send_nudge(stats, config.SITE_URL or "", tops,
-                                     drafted_roles=drafted_roles, proposals=proposals)
-    print(f"   email: {email_status}")
+    if email:
+        print(f"   email: {notify.send_nudge(stats, config.SITE_URL or '', tops, drafted_roles=drafted_roles, proposals=proposals)}")
+    else:
+        print("   email: skipped (--no-email)")
     if pushed:
         website.mark_published(conn, rows)  # clear NEW only after a successful publish
     return stats
@@ -269,7 +270,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
     conn = db.connect()
     db.init_db(conn)
     print("== publish ==")
-    _publish(conn, dry_run=args.dry_run)
+    _publish(conn, dry_run=args.dry_run, email=not args.no_email)
     conn.close()
     return 0
 
@@ -477,6 +478,96 @@ def cmd_dismiss(args: argparse.Namespace) -> int:
     return 0
 
 
+def _set_feedback(job_id: int, decision: str) -> int:
+    conn = db.connect()
+    db.init_db(conn)
+    job = store.get_job(conn, job_id)
+    if not job:
+        print(f"error: no job with id {job_id} (ids show when you expand a row on the site)")
+        conn.close()
+        return 2
+    store.record_feedback(conn, job_id, decision)
+    conn.close()
+    if decision == "dismissed":
+        print(f"Rejected: [{job_id}] {job['title']} @ {job['company']} "
+              "— hidden on the next publish; this also steers future scoring.")
+    else:
+        print(f"Saved: [{job_id}] {job['title']} @ {job['company']} — this steers future scoring.")
+    return 0
+
+
+def cmd_reject(args: argparse.Namespace) -> int:
+    return _set_feedback(args.id, "dismissed")
+
+
+def cmd_save(args: argparse.Namespace) -> int:
+    return _set_feedback(args.id, "saved")
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """Guided triage of company proposals + sourced jobs (no IDs to remember)."""
+    import sys
+
+    from . import discovery, website
+
+    config.ensure_dirs()
+    conn = db.connect()
+    db.init_db(conn)
+    if not sys.stdin.isatty():
+        print("`review` is interactive — run it in a terminal. Non-interactive equivalents: "
+              "`job-agent approve|dismiss <id>` (companies), `job-agent reject|save <id>` (jobs).")
+        conn.close()
+        return 0
+
+    n = 0
+    if not args.jobs_only:
+        props = store.list_suggestions(conn, "proposed")
+        print(f"\n=== {len(props)} company proposal(s) ===")
+        for s in props:
+            board = f"{s['ats']}:{s['slug']}" if s["ats"] else "careers page only (needs ats+slug to add)"
+            print(f"\n  {s['company']}  [{board}]\n    {s['reason'] or ''}\n    {s['evidence_url'] or ''}")
+            ans = input("    [a]pprove  [d]ismiss  [Enter]skip  [q]uit > ").strip().lower()
+            if ans == "q":
+                conn.close()
+                return 0
+            if ans == "a":
+                if s["ats"] and s["slug"]:
+                    print("    " + discovery.approve(conn, s["id"]))
+                else:
+                    ats = input("      ats (greenhouse|lever|ashby|workable|smartrecruiters|workday) or Enter to skip: ").strip()
+                    slug = input("      slug: ").strip() if ats else ""
+                    print("    " + (discovery.approve(conn, s["id"], ats=ats, slug=slug) if ats and slug else "skipped (no slug)"))
+                n += 1
+            elif ans == "d":
+                print("    " + discovery.dismiss(conn, s["id"]))
+                n += 1
+
+    if not args.suggestions_only:
+        decided = store.decided_job_ids(conn)
+        rows = [r for r in website.select_master(conn) if r["id"] not in decided]
+        if args.new_only:
+            rows = [r for r in rows if not r["notified"]]
+        print(f"\n=== {len(rows)} job(s) to review (highest fit first; Ctrl-C or q to stop) ===")
+        for r in rows:
+            print(f"\n  [{r['fit_score']}] {r['company']} — {r['title']}  ({r['location'] or 'n/a'})\n    {r['url'] or ''}")
+            ans = input("    [s]ave  [r]eject  [Enter]skip  [q]uit > ").strip().lower()
+            if ans == "q":
+                break
+            if ans == "s":
+                store.record_feedback(conn, r["id"], "saved")
+                print("    saved")
+                n += 1
+            elif ans == "r":
+                store.record_feedback(conn, r["id"], "dismissed")
+                print("    rejected")
+                n += 1
+
+    conn.close()
+    print(f"\nDone — {n} decision(s) recorded. Rejected roles are hidden on the next publish and, "
+          "with your saves, steer future scoring. Run `job-agent publish` to refresh the site.")
+    return 0
+
+
 def cmd_feedback(args: argparse.Namespace) -> int:
     config.ensure_dirs()
     conn = db.connect()
@@ -574,6 +665,18 @@ def build_parser() -> argparse.ArgumentParser:
     dis.add_argument("id", type=int, help="suggestion id (from `discover --list`)")
     dis.set_defaults(func=cmd_dismiss)
 
+    rv = sub.add_parser("review", help="Guided triage: approve/dismiss proposals + save/reject jobs")
+    rv.add_argument("--jobs-only", action="store_true", help="only review sourced jobs")
+    rv.add_argument("--suggestions-only", action="store_true", help="only review company proposals")
+    rv.add_argument("--new-only", action="store_true", help="only review roles new since the last publish")
+    rv.set_defaults(func=cmd_review)
+    rj = sub.add_parser("reject", help="Hide a sourced role (and teach future scoring)")
+    rj.add_argument("id", type=int, help="job id (shown when you expand a row on the site)")
+    rj.set_defaults(func=cmd_reject)
+    sv = sub.add_parser("save", help="Mark a sourced role as interesting (teaches future scoring)")
+    sv.add_argument("id", type=int, help="job id (shown when you expand a row on the site)")
+    sv.set_defaults(func=cmd_save)
+
     fb = sub.add_parser("feedback", help="Mark a job saved/dismissed (tunes future scoring)")
     fb.add_argument("job_id", nargs="?", type=int, help="job id (shown in the digest)")
     grp = fb.add_mutually_exclusive_group()
@@ -598,6 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pub = sub.add_parser("publish", help="Rebuild + publish the website (and optional email) from scored data")
     pub.add_argument("--dry-run", action="store_true", help="build the site locally + print; don't push or email")
+    pub.add_argument("--no-email", action="store_true", help="push the site but don't send the email nudge")
     pub.set_defaults(func=cmd_publish)
 
     return p

@@ -107,6 +107,11 @@ job-agent discover --list                    # show open proposals + their ids
 job-agent approve 3                          # append proposal #3 to companies.yaml
 job-agent dismiss 4                          # suppress proposal #4 from re-proposal
 
+# Triage results (the published page is read-only — act from your terminal)
+job-agent review                             # guided: approve/dismiss companies + save/reject jobs
+job-agent reject 42                          # hide a sourced role (ids show when you expand a row); teaches scoring
+job-agent save 42                            # mark a role interesting; teaches scoring
+
 # Publish the website (./docs/index.html) + optional email nudge
 job-agent publish
 job-agent publish --dry-run                   # build locally + print; don't push/email
@@ -217,8 +222,21 @@ each candidate — resolving a real public ATS feed, or else checking the cited 
 URL is reachable. Only verified candidates are **proposed** (with a citable source);
 the rest go to an "unverified — not proposed" bucket. **Nothing is auto-added.** Review
 proposals on the website ("🧭 Companies to consider") or `discover --list`, then
-`approve <id>` (appends to `companies.yaml`) or `dismiss <id>`. Runs at most weekly
-(`--force` overrides). Grounding: a company is never proposed on the model's word alone.
+`approve <id>` (appends to `companies.yaml`) or `dismiss <id>` — or run `job-agent review`
+for a guided pass. Runs at most weekly (`--force` overrides). Grounding: a company is
+never proposed on the model's word alone.
+
+## Acting on results (reject / save / approve)
+
+The published page is **read-only** (static GitHub Pages), so you act from your terminal —
+each role's id shows when you expand its row. The easiest path is **`job-agent review`**,
+a guided pass over open company proposals (approve/dismiss) and undecided roles
+(save/reject) with no ids to remember. Or act directly: **`job-agent reject <id>`** hides a
+role from the site on the next publish, and **`job-agent save <id>`** flags one you like.
+Both are remembered (the `feedback` table) and **fed into future deep-scoring** — so the
+agent learns what to surface and what to skip on later runs. (`reject`/`save` are friendly
+aliases for `feedback <id> --dismissed/--saved`.) Rejected roles stay in the DB marked
+dismissed, so they're filtered out and never re-added.
 
 ## Publishing (GitHub Pages)
 

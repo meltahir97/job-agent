@@ -89,6 +89,20 @@ class TestWebsite(unittest.TestCase):
         self.assertIn('data-remote="1"', html)              # filterable: remote
         conn.close()
 
+    def test_review_and_reject_affordances(self):
+        rows = website.select_master(self.conn)
+        html, _ = website.render_html(rows)
+        self.assertIn("job-agent review", html)                       # help banner
+        jid = self.ids[1]                                            # a surfaced role
+        self.assertIn(f"job-agent reject {jid}", html)               # per-row reject command
+        self.assertIn(f"job-agent save {jid}", html)
+        self.assertIn(f"id {jid} ", html)                            # id shown to act on
+
+    def test_decided_job_ids(self):
+        # job 4 was dismissed via feedback in setUp
+        self.assertIn(self.ids[4], store.decided_job_ids(self.conn))
+        self.assertNotIn(self.ids[1], store.decided_job_ids(self.conn))
+
     def test_mark_published_clears_new(self):
         rows = website.select_master(self.conn)
         website.mark_published(self.conn, rows)
