@@ -9,7 +9,10 @@ the existing pipeline uses. Grounding rules hold:
 """
 from __future__ import annotations
 
+import html
+import re
 from typing import List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -292,6 +295,67 @@ class WorkdaySource(JobSource):
         )
 
 
+class GoogleSource(JobSource):
+    """Google Careers has no public ATS feed, so we read the job links embedded in the
+    public results page, scoped to YouTube / media via search queries. This is a SCRAPE
+    (HTML, not an API) — inherently fragile; it returns [] gracefully if the markup
+    changes, never fabricating. Per-job location/description are thin (title-derived);
+    deep scoring judges relevance against the candidate profile.
+    """
+    name = ats = "google"
+    BASE = "https://www.google.com/about/careers/applications/jobs/results/"
+    _JOB = re.compile(
+        r'href="jobs/results/(\d{6,})-([a-z0-9-]+)\?[^"]*"\s+aria-label="Learn more about ([^"]+)"'
+    )
+    DEFAULT_QUERIES = ["YouTube", "media partnerships", "content partnerships"]
+    # obvious non-fits for a strategy / ops / BD / corp-dev candidate — dropped at source
+    _DROP = re.compile(
+        r"\b(software engineer|engineer,|hardware|silicon|firmware|ux |ux/|ui designer|"
+        r"research scientist|developer relations|data center|network engineer|"
+        r"security engineer|electrical|mechanical engineer|quantum|chip )\b", re.I)
+    MAX = 60
+
+    def __init__(self, slug=None, company="Google", session=None, timeout: int = 25, **extra):
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        q = extra.get("queries")
+        self.queries = q if isinstance(q, list) and q else self.DEFAULT_QUERIES
+        self.location = extra.get("location") or "United States"
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        out = {}
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "text/html"}
+        for q in self.queries:
+            for page in range(1, 4):  # a few pages per query is plenty after filtering
+                url = f"{self.BASE}?q={quote(q)}&location={quote(self.location)}&page={page}"
+                try:
+                    resp = self.session.get(url, headers=headers, timeout=self.timeout)
+                    resp.raise_for_status()
+                except requests.RequestException:
+                    break
+                found = self._JOB.findall(resp.text)
+                if not found:
+                    break
+                for jid, slug, title in found:
+                    title = html.unescape(title).strip()
+                    if jid in out or self._DROP.search(title):
+                        continue
+                    out[jid] = self._normalize(jid, slug, title)
+                if len(found) < 10:
+                    break
+        return list(out.values())[: self.MAX]
+
+    def _normalize(self, jid: str, slug: str, title: str) -> Job:
+        return Job(
+            source=self.ats, source_job_id=jid, title=title, company=self.company,
+            location=self.location, remote=_remote_from_text(title),
+            description=f"{title}. Google Careers role ({self.location}); team/function per the title.",
+            url=f"{self.BASE}{jid}-{slug}", category=None, posted_at=None,
+            raw={"id": jid, "slug": slug},
+        )
+
+
 SOURCE_BY_ATS = {
     "greenhouse": GreenhouseSource,
     "lever": LeverSource,
@@ -299,4 +363,5 @@ SOURCE_BY_ATS = {
     "workable": WorkableSource,
     "smartrecruiters": SmartRecruitersSource,
     "workday": WorkdaySource,
+    "google": GoogleSource,
 }

@@ -103,6 +103,23 @@ class TestWebsite(unittest.TestCase):
         self.assertIn(self.ids[4], store.decided_job_ids(self.conn))
         self.assertNotIn(self.ids[1], store.decided_job_ids(self.conn))
 
+    def test_per_company_cap(self):
+        conn = db.connect(":memory:")
+        db.init_db(conn)
+        for i in range(3):  # 3 roles at one high-volume company
+            jid = store.upsert_job(conn, _job(10 + i, "BigCo", f"Role {i}", f"https://b/{i}"))[0]
+            store.record_score(conn, jid, stage="deep", model="m", fit_score=80 - i, label="match",
+                               rationale="why", red_flags=["f"])
+        jid = store.upsert_job(conn, _job(20, "SmallCo", "Solo", "https://s/0"))[0]
+        store.record_score(conn, jid, stage="deep", model="m", fit_score=70, label="match",
+                           rationale="why", red_flags=["f"])
+        from collections import Counter
+        capped = Counter(r["company"] for r in website.select_master(conn, per_company_cap=2))
+        self.assertEqual(capped["BigCo"], 2)      # 3 -> 2 (keeps highest fit)
+        self.assertEqual(capped["SmallCo"], 1)
+        self.assertEqual(len(website.select_master(conn, per_company_cap=0)), 4)  # 0 = no cap
+        conn.close()
+
     def test_mark_published_clears_new(self):
         rows = website.select_master(self.conn)
         website.mark_published(self.conn, rows)

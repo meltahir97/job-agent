@@ -48,7 +48,8 @@ companies:
   # TCG (The Chernin Group) — UNRESOLVED: no public ATS board found (small VC).
   # Pixar — UNRESOLVED: no standalone board; roles live on Disney's Workday
   #   (disney/wd5/disneycareer, verified). Add a "Disney" workday entry for that pipeline.
-  # YouTube / Google — UNRESOLVED: Google careers is custom (no clean public JSON feed).
+  # YouTube / Google — no public ATS; added below via the custom `google` source,
+  #   scoped to YouTube / media roles (scrapes the public careers results page).
 
   # --- Tier 3 ---
   - name: Substack
@@ -62,3 +63,30 @@ companies:
     slug: nvidia
     dc: wd5
     site: NVIDIAExternalCareerSite
+  - name: "Patreon"
+    ats: ashby
+    slug: patreon
+  - name: "Jam City"
+    ats: lever
+    slug: jamcity
+  - name: "Kabam"
+    ats: lever
+    slug: kabam
+  - name: "Scopely"
+    ats: greenhouse
+    slug: scopely
+  - name: "MasterClass"
+    ats: greenhouse
+    slug: masterclass
+  - name: "Twitch Interactive"
+    ats: greenhouse
+    slug: twitch
+  # Google — custom source; only fetches roles matching these media/YouTube queries,
+  # then triage + deep scoring keep only what fits the candidate's background.
+  - name: "Google (YouTube / Media)"
+    ats: google
+    queries:
+      - "YouTube"
+      - "YouTube partnerships"
+      - "media partnerships"
+      - "content partnerships"

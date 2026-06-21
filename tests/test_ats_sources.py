@@ -9,7 +9,7 @@ from unittest import mock
 
 from job_agent.sources import ats as ats_mod
 from job_agent.sources.ats_sources import (
-    AshbySource, GreenhouseSource, LeverSource, WorkableSource,
+    AshbySource, GoogleSource, GreenhouseSource, LeverSource, WorkableSource,
 )
 from job_agent.sources.base import JobQuery
 
@@ -130,6 +130,53 @@ class TestWorkable(unittest.TestCase):
         jobs = WorkableSource("acme", "Acme")
         with mock.patch.object(ats_mod, "raw_jobs", return_value=self.FIX):
             self.assertEqual(len(jobs.fetch(JobQuery(keywords="", max_results=1))), 1)
+
+
+class _Resp:
+    def __init__(self, text):
+        self.text = text
+
+    def raise_for_status(self):
+        pass
+
+
+class _FakeSession:
+    def __init__(self, html):
+        self.html, self.calls = html, 0
+
+    def get(self, url, **k):
+        self.calls += 1
+        return _Resp(self.html)
+
+
+class TestGoogle(unittest.TestCase):
+    # mirrors the real careers HTML: per-job <a href="jobs/results/<id>-<slug>?..." aria-label="Learn more about <title>">
+    FIX = (
+        '<a href="jobs/results/107380289797268166-strategic-partnerships-development-manager-ctv-youtube'
+        '?q=youtube&amp;location=United+States" aria-label="Learn more about Strategic Partnerships '
+        'Development Manager, CTV, YouTube"></a>'
+        '<a href="jobs/results/114203708736053958-software-engineer-youtube-shopping'
+        '?q=youtube&amp;location=United+States" aria-label="Learn more about Software Engineer, YouTube Shopping"></a>'
+        '<a href="jobs/results/131915072506077894-strategic-partner-manager-shopping-youtube'
+        '?q=youtube&amp;location=United+States" aria-label="Learn more about Strategic Partner Manager, Shopping, YouTube"></a>'
+    )
+
+    def test_parses_filters_and_normalizes(self):
+        src = GoogleSource(None, "Google", session=_FakeSession(self.FIX), queries=["YouTube"])
+        jobs = src.fetch()
+        titles = [j.title for j in jobs]
+        self.assertIn("Strategic Partnerships Development Manager, CTV, YouTube", titles)
+        self.assertIn("Strategic Partner Manager, Shopping, YouTube", titles)
+        self.assertNotIn("Software Engineer, YouTube Shopping", titles)  # eng dropped at source
+        j = jobs[0]
+        self.assertEqual(j.source, "google")
+        self.assertEqual(j.company, "Google")
+        self.assertTrue(j.url.startswith("https://www.google.com/about/careers/applications/jobs/results/"))
+        self.assertEqual(j.source_job_id, "107380289797268166")
+
+    def test_no_jobs_returns_empty(self):
+        src = GoogleSource(None, "Google", session=_FakeSession("<html>no jobs here</html>"), queries=["YouTube"])
+        self.assertEqual(src.fetch(), [])
 
 
 if __name__ == "__main__":

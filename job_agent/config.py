@@ -82,6 +82,9 @@ COUNTRY = "us"  # Adzuna country code
 # (and 'skip'-labelled roles) are excluded from output.
 TIER_STRONG_MIN = 75   # "Strong matches"  (fit >= 75)
 TIER_LOOK_MIN = 30     # "Worth a look"    (30 <= fit < 75); below = clearly unfit, excluded
+# Cap surfaced roles per company so a single high-volume board (e.g. OpenAI's ~580
+# postings) can't flood the list — keeps the strongest N per company. 0 = no cap.
+PER_COMPANY_CAP = 12
 
 # --- Watchlist location filter (TUNE HERE) ---------------------------------
 # KEEP a job if it is in the Bay Area OR remote-inclusive of the US/California;

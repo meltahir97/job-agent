@@ -53,11 +53,29 @@ def _dedup(rows):
     return out
 
 
-def select_master(conn: sqlite3.Connection, min_score: Optional[int] = None) -> List[sqlite3.Row]:
-    """All tier-worthy roles, deduped by fingerprint (best score per role)."""
+def _cap_per_company(rows, cap):
+    """Keep the strongest `cap` roles per company (rows are already fit-desc) so one
+    high-volume board can't dominate. cap<=0 disables."""
+    if not cap or cap <= 0:
+        return rows
+    seen, out = {}, []
+    for r in rows:
+        co = r["company"] or ""
+        if seen.get(co, 0) >= cap:
+            continue
+        seen[co] = seen.get(co, 0) + 1
+        out.append(r)
+    return out
+
+
+def select_master(conn: sqlite3.Connection, min_score: Optional[int] = None,
+                  per_company_cap: Optional[int] = None) -> List[sqlite3.Row]:
+    """Tier-worthy roles, deduped by fingerprint (best score per role), capped per
+    company so no single board floods the list."""
     min_score = config.TIER_LOOK_MIN if min_score is None else min_score
+    cap = config.PER_COMPANY_CAP if per_company_cap is None else per_company_cap
     sql = _SELECT.format(tier_filter=_TIER_FILTER)
-    return _dedup(conn.execute(sql, {"min_score": min_score}).fetchall())
+    return _cap_per_company(_dedup(conn.execute(sql, {"min_score": min_score}).fetchall()), cap)
 
 
 def select_all_scored(conn: sqlite3.Connection) -> List[sqlite3.Row]:

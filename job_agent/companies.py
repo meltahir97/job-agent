@@ -15,7 +15,9 @@ from typing import Dict, List, Optional
 
 from . import config
 
-VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday", "auto"}
+VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday", "google", "auto"}
+# ATS types that resolve themselves without a board slug.
+_NO_SLUG = {"auto", "google"}
 
 
 @dataclass
@@ -57,9 +59,11 @@ def load_companies(path: Optional[Path] = None) -> List[Company]:
             raise CompaniesError(
                 f"{name}: invalid ats '{ats}' (use one of {sorted(VALID_ATS)})."
             )
-        if ats != "auto" and not slug:
+        if ats not in _NO_SLUG and not slug:
             raise CompaniesError(f"{name}: 'slug' is required when ats={ats}.")
-        extra = {k: str(v) for k, v in e.items() if k not in ("name", "ats", "slug") and v is not None}
+        # preserve list-valued extras (e.g. Google `queries`); stringify scalars (Workday dc/site)
+        extra = {k: (v if isinstance(v, list) else str(v))
+                 for k, v in e.items() if k not in ("name", "ats", "slug") and v is not None}
         if ats == "workday" and not (extra.get("dc") and extra.get("site")):
             raise CompaniesError(f"{name}: ats=workday needs 'dc' (e.g. wd5) and 'site' fields.")
         out.append(Company(name=name, ats=ats, slug=slug, extra=extra))
