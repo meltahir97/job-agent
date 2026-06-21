@@ -153,10 +153,13 @@ Your target companies live in `companies.yaml`:
 ```yaml
 companies:
   - name: Stripe
-    ats: greenhouse      # greenhouse | lever | ashby | workable | auto
-    slug: stripe         # board token; required UNLESS ats: auto
+    ats: greenhouse      # greenhouse | lever | ashby | workable | smartrecruiters | workday | google | auto
+    slug: stripe         # board token; required UNLESS ats: auto/google
   - name: Notion
     ats: auto            # resolver discovers the board from public ATS URLs
+  - name: Google (YouTube / Media)
+    ats: google          # custom scraper; scoped by media/YouTube search queries
+    queries: ["YouTube", "media partnerships", "content partnerships"]
 ```
 
 - **Explicit** (`ats` + `slug`) is exact and fast. The `slug` is the token in the
@@ -164,6 +167,13 @@ companies:
   `jobs.ashbyhq.com/SLUG`, `SLUG.workable.com`.
 - **`ats: auto`** guesses the slug from the name and probes the public Greenhouse /
   Lever / Ashby / Workable endpoints; the first board that actually responds wins.
+- **`ats: google`** has no public ATS, so it scrapes Google's public careers results
+  page filtered to the `queries` you list (e.g. YouTube / media), then triage + deep
+  scoring keep only what fits your background. No slug needed; fragile by nature
+  (returns nothing rather than guessing if the markup changes).
+- **Per-company cap:** the website keeps the strongest `PER_COMPANY_CAP` roles per
+  company (config; default 12) so one high-volume board (e.g. OpenAI's ~580 postings)
+  can't flood the list.
 - **Unresolved** companies (auto with no match) are **reported, never guessed** — the
   `fetch`/`run` output lists them under `UNRESOLVED` so you can add the right
   `ats` + `slug` manually. The agent never fabricates a feed or a listing.
