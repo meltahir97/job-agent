@@ -313,8 +313,7 @@ class GoogleSource(JobSource):
         r"\b(software engineer|engineer,|hardware|silicon|firmware|ux |ux/|ui designer|"
         r"research scientist|developer relations|data center|network engineer|"
         r"security engineer|electrical|mechanical engineer|quantum|chip )\b", re.I)
-    PER_QUERY = 15  # cap per query so every query (incl. niche ones like News) is represented
-    MAX = 200       # overall safety cap (deep scoring filters relevance anyway)
+    MAX_PAGES = 6  # natural bound: paginate each query until results run out (or this)
 
     def __init__(self, slug=None, company="Google", session=None, timeout: int = 25, **extra):
         self.company = company
@@ -325,11 +324,12 @@ class GoogleSource(JobSource):
         self.location = extra.get("location") or "United States"
 
     def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        # No per-query cap: every query contributes all its (deduped, non-eng) roles;
+        # pagination is the only bound. Deep scoring filters relevance downstream.
         out = {}
         headers = {"User-Agent": _BROWSER_UA, "Accept": "text/html"}
         for q in self.queries:
-            taken = 0  # cap PER QUERY so later queries aren't starved by earlier ones
-            for page in range(1, 4):
+            for page in range(1, self.MAX_PAGES + 1):
                 url = f"{self.BASE}?q={quote(q)}&location={quote(self.location)}&page={page}"
                 try:
                     resp = self.session.get(url, headers=headers, timeout=self.timeout)
@@ -344,10 +344,9 @@ class GoogleSource(JobSource):
                     if jid in out or self._DROP.search(title):
                         continue
                     out[jid] = self._normalize(jid, slug, title)
-                    taken += 1
-                if len(found) < 10 or taken >= self.PER_QUERY:
+                if len(found) < 10:  # last page for this query
                     break
-        return list(out.values())[: self.MAX]
+        return list(out.values())
 
     def _normalize(self, jid: str, slug: str, title: str) -> Job:
         return Job(
