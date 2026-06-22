@@ -81,16 +81,23 @@ companies:
   - name: "Twitch Interactive"
     ats: greenhouse
     slug: twitch
-  # Google — custom source; only fetches roles matching these media/YouTube queries,
-  # then triage + deep scoring keep only what fits the candidate's background.
+  # Google — custom source; queries combine media/YouTube context with the CORE
+  # functions (strategy, ops, BD, partnerships, corp dev) so the search itself is
+  # function-targeted; triage + deep scoring then keep only genuine fits.
   - name: "Google (YouTube / Media)"
     ats: google
     queries:
-      - "YouTube"
+      - "YouTube strategy and operations"
       - "YouTube partnerships"
-      - "Google News"
-      - "news partnerships"
+      - "YouTube business development"
+      - "YouTube corporate development"
+      - "Google News partnerships"
       - "media partnerships"
+      - "media strategy and operations"
       - "content partnerships"
-      - "entertainment partnerships"
-      - "publisher partnerships"
+  - name: "Unity Technologies"
+    ats: greenhouse
+    slug: unity
+  - name: "Electronic Arts (EA)"
+    ats: greenhouse
+    slug: EA

@@ -18,41 +18,47 @@ from typing import Any, Dict, Iterable, List, Optional
 from .. import config, store
 from . import llm
 
+# The candidate's CORE target functions. Roles here are the priority; anything else
+# needs high conviction to surface.
+CORE_FUNCTIONS = (
+    "Corporate Development, M&A, Strategy, Operations, Business Development, and Partnerships "
+    "(plus close equivalents: Corporate/Business Strategy, Strategic Finance/Planning, "
+    "Strategy & Operations, Deals, Alliances, Ventures, and GTM/commercial strategy)"
+)
+
 TRIAGE_SYSTEM = (
-    "You are a HIGH-RECALL job-fit triager for one specific candidate (profile below) whose "
-    "background spans MULTIPLE threads — see the profile's experience_threads and employers — "
-    "e.g. strategy, operations, chief of staff, business development & partnerships, dealmaking "
-    "/ corporate development, campaign & analytics, general management, and media/entertainment. "
-    "Judge fit against the candidate's FULL background, not any single title: a role that "
-    "strongly fits ANY major thread should be KEPT. Every listing is from a company on the "
-    "candidate's target watchlist, so KEEP generously and let deep scoring judge fit. DROP "
-    "a role ONLY if it is an OBVIOUS HARD-NO — i.e. it clearly requires a fundamentally different "
-    "skill set the candidate does not have: hands-on software/ML engineering, design (UX/UI/"
-    "graphic), HR / recruiting, accounting / audit / tax, hands-on data science, customer "
-    "support / success, or content/editorial production (writing, video, art) — OR it "
-    "REQUIRES a credential the candidate lacks: a JD/law degree, MD, PhD or technical "
-    "Master's, CPA, PE license, bar admission, or active security clearance — none of "
-    "which the candidate has (see the profile's education). An MBA is NOT a "
-    "disqualifier: treat MBA-preferred roles as a fit. When unsure, KEEP. Use ONLY the "
-    "provided fields; never invent. Return ONLY a JSON array."
+    "You are a job-fit triager for one specific candidate (profile below) who is TARGETING roles "
+    f"in these CORE functions: {CORE_FUNCTIONS}. KEEP every role whose primary function is one of "
+    "these. For a role OUTSIDE these functions, KEEP it ONLY if the title/description plausibly "
+    "indicates a strong fit for a senior strategy / operations / dealmaking background; otherwise "
+    "DROP. Always DROP obvious hard-nos — hands-on software/ML engineering, design (UX/UI/graphic), "
+    "HR/recruiting, accounting/audit/tax, hands-on data science, customer support/success, "
+    "content/editorial production — and any role REQUIRING a credential the candidate lacks "
+    "(JD/law degree, MD, PhD or technical Master's, CPA, PE license, bar admission, active security "
+    "clearance — the candidate has none; an MBA is NOT required and not a disqualifier). When a role "
+    "is plausibly core, KEEP and let deep scoring decide. Use ONLY the provided fields; never invent. "
+    "Return ONLY a JSON array."
 )
 
 DEEP_SYSTEM = (
-    "You are evaluating job fit for one specific candidate whose profile is given below. Judge "
-    "against the candidate's FULL, multi-thread background — every employer, experience_thread, "
-    "and achievement in the profile — NOT just the most recent title. A strong fit for ANY major "
-    "thread (strategy, operations, chief of staff, BD/partnerships, dealmaking/corp dev, "
-    "analytics, general management, media) should score well. For "
-    "EACH listing produce: a 0-100 fit score; a label; 'pros' (2-4 short bullets on why it "
-    "fits — specific overlap with the profile); and 'cons' (2-4 short bullets: gaps, watch-outs, "
-    "or disqualifiers). Labels (generous on recall): 'match' = strong, on-target fit; 'stretch' "
-    "= partially or aspirationally qualified; 'skip' = clearly NOT a fit. DISQUALIFY (set label "
-    "'skip', fit_score < 20, and state it in cons) any role that REQUIRES a credential the "
-    "candidate lacks — a JD/law degree, MD, PhD or technical Master's, CPA, PE license, bar "
-    "admission, or active security clearance — none of which the candidate has (see the "
-    "profile's education). An MBA is NOT a disqualifier; MBA-preferred roles still fit. When "
-    "otherwise torn between stretch and skip, choose stretch. Use ONLY the provided data; never "
-    "invent salary, requirements, or facts. Return ONLY a JSON array."
+    "You are evaluating job fit for one specific candidate (profile below) who is TARGETING these "
+    f"CORE functions: {CORE_FUNCTIONS}. APPLY THIS PRIORITY STRICTLY: "
+    "(1) If the role's PRIMARY function is one of those core functions, score it on genuine fit to "
+    "the candidate's background — strong, on-target core roles should score high. "
+    "(2) If the role is OUTSIDE those core functions (e.g. marketing, analytics/data science, "
+    "program/project management, product management, content/editorial, communications, recruiting, "
+    "finance/accounting ops, engineering, design, research, support), score it BELOW 30 — so it is "
+    "NOT surfaced — UNLESS you have HIGH CONVICTION it is an excellent, specific fit for THIS "
+    "candidate; only then score it on merit, and you MUST justify that high conviction explicitly in "
+    "'pros'. Default non-core roles to a low score. "
+    "For EACH listing produce: a 0-100 fit_score; a label ('match' = strong on-target core fit; "
+    "'stretch' = partial/aspirational; 'skip' = not a fit); 'pros' (2-4 short bullets of specific "
+    "overlap — for a non-core role, LEAD with the high-conviction reason); and 'cons' (2-4 short "
+    "bullets: gaps, watch-outs, or why it is off-target). DISQUALIFY (label 'skip', fit_score < 20, "
+    "and state it in cons) any role REQUIRING a credential the candidate lacks — a JD/law degree, MD, "
+    "PhD or technical Master's, CPA, PE license, bar admission, or active security clearance (the "
+    "candidate has none; an MBA is NOT required and not a disqualifier). Use ONLY the provided data; "
+    "never invent salary, requirements, or facts. Return ONLY a JSON array."
 )
 
 PROFILE_KEYS = [
