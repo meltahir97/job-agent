@@ -10,9 +10,17 @@
 
 companies:
   # --- Tier 1 ---
-  - name: Netflix              # Lever board exists; 0 open roles at pull time
-    ats: lever
-    slug: netflix
+  # Netflix: the Lever board is dead (0 roles); real careers feed is the Eightfold API
+  # at explore.jobs.netflix.net. Netflix is all media/entertainment, so query by function.
+  - name: Netflix
+    ats: netflix
+    queries:
+      - "strategy"
+      - "operations"
+      - "business development"
+      - "partnerships"
+      - "corporate development"
+      - "content strategy"
   - name: Roblox
     ats: greenhouse
     slug: roblox
@@ -25,7 +33,20 @@ companies:
   - name: Epic Games
     ats: greenhouse
     slug: epicgames
-  # Apple — UNRESOLVED: jobs.apple.com is custom; Workday probe returned 401. No public feed.
+  # Apple — no public ATS; custom `apple` source scrapes jobs.apple.com search results,
+  # scoped to Media & Entertainment divisions (TV+, Music, Podcasts, News, Books, Arcade,
+  # Sports, Beats). Drops retail/eng at source; deep scoring keeps core-function fits.
+  - name: "Apple (Media & Entertainment)"
+    ats: apple
+    queries:
+      - "Apple TV"
+      - "Apple Music"
+      - "Apple Podcasts"
+      - "Apple News"
+      - "Apple Sports"
+      - "content partnerships"
+      - "business affairs"
+      - "media partnerships"
 
   # --- Tier 2 ---
   - name: Spotify

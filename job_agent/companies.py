@@ -15,9 +15,10 @@ from typing import Dict, List, Optional
 
 from . import config
 
-VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday", "google", "auto"}
-# ATS types that resolve themselves without a board slug.
-_NO_SLUG = {"auto", "google"}
+VALID_ATS = {"greenhouse", "lever", "ashby", "workable", "smartrecruiters", "workday",
+             "google", "netflix", "apple", "auto"}
+# ATS types that resolve themselves without a board slug (custom/query-based sources).
+_NO_SLUG = {"auto", "google", "netflix", "apple"}
 
 
 @dataclass

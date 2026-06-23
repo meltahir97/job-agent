@@ -9,7 +9,8 @@ from unittest import mock
 
 from job_agent.sources import ats as ats_mod
 from job_agent.sources.ats_sources import (
-    AshbySource, GoogleSource, GreenhouseSource, LeverSource, WorkableSource,
+    AppleSource, AshbySource, GoogleSource, GreenhouseSource, LeverSource,
+    NetflixSource, WorkableSource,
 )
 from job_agent.sources.base import JobQuery
 
@@ -177,6 +178,70 @@ class TestGoogle(unittest.TestCase):
     def test_no_jobs_returns_empty(self):
         src = GoogleSource(None, "Google", session=_FakeSession("<html>no jobs here</html>"), queries=["YouTube"])
         self.assertEqual(src.fetch(), [])
+
+
+class _JsonResp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._p
+
+
+class _JsonSession:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def get(self, url, **k):
+        return _JsonResp(self.payload)
+
+
+class TestNetflix(unittest.TestCase):
+    PAYLOAD = {"count": 2, "positions": [
+        {"id": 790315857851, "name": "Manager, Content Strategy and Operations",
+         "location": "Los Gatos,California,United States of America",
+         "department": "Content", "job_description": "<p>Lead content strategy &amp; ops.</p>",
+         "display_job_id": "JR1", "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790315857851",
+         "work_location_option": "onsite"},
+        {"id": 222, "name": "Senior Software Engineer, Playback", "location": "Los Gatos,California,United States",
+         "job_description": "<p>code</p>", "canonicalPositionUrl": "https://x/222"},
+    ]}
+
+    def test_parses_drops_eng_and_normalizes(self):
+        src = NetflixSource(None, "Netflix", session=_JsonSession(self.PAYLOAD), queries=["strategy"])
+        jobs = src.fetch()
+        self.assertEqual([j.title for j in jobs], ["Manager, Content Strategy and Operations"])  # SWE dropped
+        j = jobs[0]
+        self.assertEqual((j.source, j.company), ("netflix", "Netflix"))
+        self.assertEqual(j.description, "Lead content strategy & ops.")   # html stripped
+        self.assertIn("explore.jobs.netflix.net", j.url)
+
+
+class TestApple(unittest.TestCase):
+    FIX = (
+        '<a class="link-inline" aria-label="Business Development Manager, Apple TV+ 114400001" '
+        'href="/en-us/details/114400001/business-development-manager-apple-tv?team=SFTWR" data-discover="true">'
+        'Business Development Manager, Apple TV+</a><span class="team-name">Software and Services</span>'
+        '<a class="link-inline" aria-label="US - Specialist: Seasonal 114438158" '
+        'href="/en-us/details/114438158/us-specialist-seasonal?team=APPST" data-discover="true">US - Specialist</a>'
+        '<a class="link-inline" aria-label="Partnerships Lead, Apple Music 114400002" '
+        'href="/en-us/details/114400002/partnerships-lead-apple-music?team=SFTWR" data-discover="true">'
+        'Partnerships Lead, Apple Music</a>'
+    )
+
+    def test_parses_filters_retail_and_normalizes(self):
+        src = AppleSource(None, "Apple", session=_FakeSession(self.FIX), queries=["Apple TV"])
+        jobs = src.fetch()
+        titles = [j.title for j in jobs]
+        self.assertIn("Business Development Manager, Apple TV+", titles)
+        self.assertIn("Partnerships Lead, Apple Music", titles)
+        self.assertNotIn("US - Specialist", titles)        # retail dropped at source
+        j = jobs[0]
+        self.assertEqual((j.source, j.company), ("apple", "Apple"))
+        self.assertTrue(j.url.startswith("https://jobs.apple.com/en-us/details/114400001/"))
 
 
 if __name__ == "__main__":

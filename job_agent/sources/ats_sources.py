@@ -358,6 +358,131 @@ class GoogleSource(JobSource):
         )
 
 
+class NetflixSource(JobSource):
+    """Netflix careers via its public Eightfold API (explore.jobs.netflix.net). Netflix
+    is entirely media/entertainment, so queries are the CORE functions; the location
+    filter + deep scoring keep only Bay/US-remote, on-target roles. Rich descriptions."""
+    name = ats = "netflix"
+    API = "https://explore.jobs.netflix.net/api/apply/v2/jobs"
+    DEFAULT_QUERIES = ["strategy", "operations", "business development", "partnerships",
+                       "corporate development", "content strategy"]
+    _DROP = re.compile(
+        r"\b(software|engineer|engineering|developer|designer|\bux\b|\bui\b|data scientist|"
+        r"machine learning|infrastructure|security engineer|technical artist|animator|recruit)\b", re.I)
+    PER_QUERY = 100
+
+    def __init__(self, slug=None, company="Netflix", session=None, timeout: int = 25, **extra):
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        q = extra.get("queries")
+        self.queries = q if isinstance(q, list) and q else self.DEFAULT_QUERIES
+        self.location = extra.get("location") or "United States"
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        out = {}
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "application/json"}
+        for q in self.queries:
+            start = 0
+            while start < self.PER_QUERY:
+                params = {"domain": "netflix.com", "query": q, "start": start, "num": 20,
+                          "location": self.location, "sort_by": "relevance"}
+                try:
+                    resp = self.session.get(self.API, params=params, headers=headers, timeout=self.timeout)
+                    resp.raise_for_status()
+                    data = resp.json()
+                except (requests.RequestException, ValueError):
+                    break
+                positions = data.get("positions") or []
+                if not positions:
+                    break
+                for p in positions:
+                    jid = str(p.get("id"))
+                    title = (p.get("name") or "").strip()
+                    if jid in out or not title or self._DROP.search(title):
+                        continue
+                    out[jid] = self._normalize(p, title)
+                start += len(positions)
+                if start >= (data.get("count") or 0):
+                    break
+        return list(out.values())
+
+    def _normalize(self, p: dict, title: str) -> Job:
+        loc = p.get("location") or (p.get("locations") or [None])[0]
+        wlo = (p.get("work_location_option") or "").lower()
+        remote = True if "remote" in wlo else _remote_from_text(loc, title)
+        return Job(
+            source=self.ats, source_job_id=str(p.get("id")), title=title, company=self.company,
+            location=loc, remote=remote,
+            description=(html_to_text(p.get("job_description") or "") or "")[:4000] or title,
+            url=p.get("canonicalPositionUrl") or f"https://explore.jobs.netflix.net/careers/job/{p.get('id')}",
+            category=p.get("department"), posted_at=None,
+            raw={"id": p.get("id"), "display_job_id": p.get("display_job_id")},
+        )
+
+
+class AppleSource(JobSource):
+    """Apple careers (jobs.apple.com) — no public API, so scrape the server-rendered
+    search results (job links + titles embedded for SEO), scoped to Media & Entertainment
+    (Apple TV+, Music, Podcasts, News, Books, Arcade, Sports, Beats) via queries. Drops
+    retail/eng/hardware at source; deep scoring keeps only core-function fits. A scrape,
+    so fragile — returns [] rather than guessing if the markup changes."""
+    name = ats = "apple"
+    BASE = "https://jobs.apple.com/en-us/search"
+    # job-row link: aria-label="<title> <id>" href="/en-us/details/<id>-<sub>/<slug>?team=<TEAM>"
+    _JOB = re.compile(
+        r'aria-label="(?P<title>[^"]+?)\s+\d{6,}"\s+href="/en-us/details/(?P<id>[\d-]+)/'
+        r'(?P<slug>[^"?]+?)(?:\?team=(?P<team>[A-Za-z0-9]+))?"')
+    DEFAULT_QUERIES = ["Apple TV", "Apple Music", "Apple Podcasts", "Apple News", "Apple Books",
+                       "Apple Sports", "content partnerships", "business affairs"]
+    # Apple team codes that are never M&E business roles: Apple Store/retail, hardware, ML/AI eng.
+    DROP_TEAMS = {"APPST", "HRDWR", "MLAI"}
+    _DROP = re.compile(
+        r"\b(specialist|genius|store leader|technician|advisor|software engineer|hardware|silicon|"
+        r"firmware|engineer|engineering|\bux\b|\bui\b|designer|scientist|machine learning|developer)\b", re.I)
+    MAX_PAGES = 3
+
+    def __init__(self, slug=None, company="Apple", session=None, timeout: int = 25, **extra):
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+        q = extra.get("queries")
+        self.queries = q if isinstance(q, list) and q else self.DEFAULT_QUERIES
+        self.location = extra.get("location") or "United States"
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        out = {}
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "text/html"}
+        for q in self.queries:
+            for page in range(1, self.MAX_PAGES + 1):
+                params = {"search": q, "location": "united-states-USA", "page": page}
+                try:
+                    resp = self.session.get(self.BASE, params=params, headers=headers, timeout=self.timeout)
+                    resp.raise_for_status()
+                except requests.RequestException:
+                    break
+                found = list(self._JOB.finditer(resp.text))
+                if not found:
+                    break
+                for m in found:
+                    jid, title, team = m.group("id"), html.unescape(m.group("title")).strip(), (m.group("team") or "")
+                    if jid in out or team in self.DROP_TEAMS or self._DROP.search(title):
+                        continue
+                    out[jid] = self._normalize(jid, m.group("slug"), title, team)
+                if len(found) < 10:
+                    break
+        return list(out.values())
+
+    def _normalize(self, jid: str, slug: str, title: str, team: str) -> Job:
+        return Job(
+            source=self.ats, source_job_id=jid, title=title, company=self.company,
+            location=self.location, remote=_remote_from_text(title),
+            description=f"{title}. Apple Careers role ({self.location}); team {team}.",
+            url=f"https://jobs.apple.com/en-us/details/{jid}/{slug}",
+            category=team, posted_at=None, raw={"id": jid, "slug": slug, "team": team},
+        )
+
+
 SOURCE_BY_ATS = {
     "greenhouse": GreenhouseSource,
     "lever": LeverSource,
@@ -366,4 +491,6 @@ SOURCE_BY_ATS = {
     "smartrecruiters": SmartRecruitersSource,
     "workday": WorkdaySource,
     "google": GoogleSource,
+    "netflix": NetflixSource,
+    "apple": AppleSource,
 }
