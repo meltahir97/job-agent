@@ -264,6 +264,35 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Health-check every watchlist company's feed; flag + auto-suggest fixes for bad slugs."""
+    from .companies import CompaniesError, load_companies
+    from .sources.watchlist import audit_watchlist
+
+    config.ensure_dirs()
+    try:
+        companies = load_companies()
+    except (FileNotFoundError, CompaniesError) as e:
+        print(f"error: {e}")
+        return 2
+    print(f"Checking {len(companies)} watchlist companies…\n")
+    broken = []
+    for r in audit_watchlist(companies):
+        mark = "✓ " if r["ok"] else "✗ "
+        line = f"  {mark} {(r['ats'] + ':' + (r['slug'] or '-')):28}  {r['company']}  ({r['count']} roles)"
+        if not r["ok"]:
+            broken.append(r)
+            line += f"  — {r['detail']}"
+            if r["fix"]:
+                line += f"  →  set slug to '{r['fix'].split(':', 1)[1]}'"
+        print(line)
+    if broken:
+        print(f"\n{len(broken)} need attention. '→' = a wrong slug I can fix; the rest have no public feed.")
+    else:
+        print(f"\nAll {len(companies)} feeds healthy ✓")
+    return 1 if broken else 0
+
+
 def cmd_auth(args: argparse.Namespace) -> int:
     """One-time Google sign-in so drafts can be written to YOUR Drive."""
     from . import oauth
@@ -774,6 +803,8 @@ def build_parser() -> argparse.ArgumentParser:
     srv.set_defaults(func=cmd_serve)
     au = sub.add_parser("auth", help="One-time Google sign-in so drafts write to YOUR Drive (OAuth)")
     au.set_defaults(func=cmd_auth)
+    doc = sub.add_parser("doctor", help="Health-check every watchlist feed + auto-suggest slug fixes")
+    doc.set_defaults(func=cmd_doctor)
 
     return p
 

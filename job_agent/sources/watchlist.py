@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple
 import requests
 
 from ..models import Job
+from . import ats as ats_http
 from . import ats_sources, resolver
 from .location import location_decision
 from .resolver import Resolution
@@ -42,6 +43,46 @@ class WatchlistReport:
     @property
     def fetched_ok(self) -> List[CompanyResult]:
         return [r for r in self.results if r.error is None and r.resolution.ok]
+
+
+def audit_watchlist(companies, session=None, retries: int = 1) -> List[dict]:
+    """Health-check every watchlist entry: does its feed actually return roles? For a
+    broken Greenhouse/Lever/Ashby/Workable slug, auto-resolve the correct one (so the
+    user never hand-debugs slugs). Returns one result dict per company:
+    {company, ats, slug, ok, count, detail, fix}. `fix` is a suggested 'ats:slug' or None.
+    """
+    from ..companies import Company
+
+    session = session or requests.Session()
+    results = []
+    for co in companies:
+        ats, slug, ok, count, detail, fix = co.ats, co.slug, False, 0, "", None
+        try:
+            if co.ats in ("google", "apple", "netflix"):  # custom sources — 1 query = quick check
+                ex = dict(co.extra); ex["queries"] = (co.extra.get("queries") or [])[:1]
+                count = len(ats_sources.SOURCE_BY_ATS[co.ats](co.slug, co.name, session=session, timeout=25, **ex).fetch())
+                ok, detail = count > 0, "custom source"
+            elif co.ats in ("greenhouse", "lever", "ashby", "workable"):
+                n = None
+                for _ in range(retries + 1):  # retry to absorb transient probe failures
+                    n = ats_http.probe(co.ats, co.slug, session, 12)
+                    if n:
+                        break
+                if n:
+                    ok, count, detail = True, n, "ok"
+                else:
+                    r = resolver.resolve_company(Company(co.name, "auto"), session)
+                    detail = "feed returned nothing"
+                    if r.ok and r.slug:
+                        fix, detail = f"{r.ats}:{r.slug}", f"auto-resolved to {r.ats}:{r.slug} ({r.n_jobs} roles)"
+            else:  # workday / smartrecruiters
+                count = len(ats_sources.SOURCE_BY_ATS[co.ats](co.slug, co.name, session=session, timeout=25, **co.extra).fetch())
+                ok, detail = count > 0, "ok"
+        except Exception as e:  # noqa: BLE001
+            detail = f"error: {str(e)[:80]}"
+        results.append({"company": co.name, "ats": ats, "slug": slug, "ok": ok,
+                        "count": count, "detail": detail, "fix": fix})
+    return results
 
 
 class WatchlistSource:
