@@ -177,6 +177,9 @@ companies:
 - **Unresolved** companies (auto with no match) are **reported, never guessed** — the
   `fetch`/`run` output lists them under `UNRESOLVED` so you can add the right
   `ats` + `slug` manually. The agent never fabricates a feed or a listing.
+- **Don't hand-edit slugs.** Add companies via `discover`/`approve` (auto-resolves the
+  feed) — or just set `ats: auto` and let the resolver find the slug. To check the whole
+  list's health (and get the correct slug for anything broken), run **`job-agent doctor`**.
 
 Each board is fetched, normalized into the standard schema, **location-filtered**, and
 deduped/seen-tracked exactly like every other source.
