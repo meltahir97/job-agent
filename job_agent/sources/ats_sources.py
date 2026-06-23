@@ -440,6 +440,11 @@ class AppleSource(JobSource):
     _DROP = re.compile(
         r"\b(specialist|genius|store leader|technician|advisor|software engineer|hardware|silicon|"
         r"firmware|engineer|engineering|\bux\b|\bui\b|designer|scientist|machine learning|developer)\b", re.I)
+    # REQUIRE a Media & Entertainment signal in the title (keeps Apple to M&E; drops
+    # iCloud/Cloud/Pay/enterprise strategy roles that would otherwise pass on function).
+    _ME = re.compile(
+        r"\b(apple tv|tv\+|music|podcast|news|sport|book|arcade|beats|original|content|"
+        r"entertainment|video|streaming|media|fitness)\b", re.I)
     MAX_PAGES = 3
 
     def __init__(self, slug=None, company="Apple", session=None, timeout: int = 25, **extra):
@@ -466,7 +471,8 @@ class AppleSource(JobSource):
                     break
                 for m in found:
                     jid, title, team = m.group("id"), html.unescape(m.group("title")).strip(), (m.group("team") or "")
-                    if jid in out or team in self.DROP_TEAMS or self._DROP.search(title):
+                    if (jid in out or team in self.DROP_TEAMS or self._DROP.search(title)
+                            or not self._ME.search(title)):  # M&E roles only
                         continue
                     out[jid] = self._normalize(jid, m.group("slug"), title, team)
                 if len(found) < 10:

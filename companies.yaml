@@ -118,7 +118,10 @@ companies:
       - "content partnerships"
   - name: "Unity Technologies"
     ats: greenhouse
-    slug: unity
-  - name: "Electronic Arts (EA)"
-    ats: greenhouse
-    slug: EA
+    slug: unity3d              # NB: the board slug is "unity3d", not "unity" (which 404s)
+  # Electronic Arts (EA) — no public ATS feed (greenhouse/lever/ashby/workday/SmartRecruiters
+  # all 404/empty); ea.com/careers is a custom site. Would need a dedicated scraper like
+  # Apple/Google. Commented out so it doesn't error every run; re-add if a feed is built.
+  # - name: "Electronic Arts (EA)"
+  #   ats: greenhouse
+  #   slug: EA
