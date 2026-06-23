@@ -153,8 +153,8 @@ Your target companies live in `companies.yaml`:
 ```yaml
 companies:
   - name: Stripe
-    ats: greenhouse      # greenhouse | lever | ashby | workable | smartrecruiters | workday | google | auto
-    slug: stripe         # board token; required UNLESS ats: auto/google
+    ats: greenhouse      # greenhouse|lever|ashby|workable|smartrecruiters|workday|google|netflix|apple|auto
+    slug: stripe         # board token; required UNLESS ats: auto/google/netflix/apple
   - name: Notion
     ats: auto            # resolver discovers the board from public ATS URLs
   - name: Google (YouTube / Media)
@@ -321,13 +321,15 @@ cleanly. Never blocks the run.
 
 ---
 
-## Scheduling (every 2 days, launchd — macOS)
+## Scheduling (daily 9am wall-clock, launchd — macOS)
 
 `run --if-due` runs the **full pipeline** (fetch → master-profile → score → discover
-→ drafts → publish → email) and **skips if <47h since the last success** (so a
-wake-from-sleep catch-up never double-runs); `--force` overrides. Discovery has its
-own weekly guard. `scripts/run_scheduled.sh` wraps it; `scripts/com.jobagent.run.plist`
-triggers it every 2 days. **Activate it** (not auto-loaded):
+→ drafts → publish → email) and **skips if <47h since the last success** (so it never
+double-runs); `--force` overrides. Discovery has its own weekly guard. The launchd job
+uses **`StartCalendarInterval` (daily 9:00 AM)** — far more reliable than `StartInterval`
+because if the Mac is asleep at 9am, launchd runs it at the **next wake**. With the 47h
+guard, a real run lands about every other day without silently missing.
+`scripts/run_scheduled.sh` wraps it; `scripts/com.jobagent.run.plist` is the job. **Activate it:**
 
 ```bash
 cp scripts/com.jobagent.run.plist ~/Library/LaunchAgents/
@@ -379,7 +381,7 @@ job_agent/
   cli.py            command-line entrypoint
 scripts/
   run_scheduled.sh           launchd wrapper (run --if-due)
-  com.jobagent.run.plist     launchd job: full pipeline every 2 days
+  com.jobagent.run.plist     launchd job: full pipeline daily 9am (47h guard)
   com.jobagent.serve.plist   launchd job: always-on local app (buttons) at :8765
 docs/index.html           the published website (GitHub Pages source)
 ```
