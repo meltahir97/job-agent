@@ -10,10 +10,17 @@
         <string>/Users/muhammadeltahir/Projects/Job Search/scripts/run_scheduled.sh</string>
     </array>
 
-    <!-- Every 2 days (172800s) while loaded. If the Mac was asleep, launchd runs
-         it once on wake; `run --if-due` then skips if <47h since the last success. -->
-    <key>StartInterval</key>
-    <integer>172800</integer>
+    <!-- Wall-clock trigger: attempt daily at 9:00 AM. Far more reliable than
+         StartInterval — if the Mac is asleep at 9am, launchd runs it at the next wake.
+         `run --if-due` then skips unless >=47h since the last success, so a real run
+         happens about every other day without ever silently missing. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>9</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
 
     <key>RunAtLoad</key>
     <false/>
