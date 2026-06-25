@@ -352,19 +352,30 @@ def generate_for_role(
     company = job["company"] or "Company"
     title = job["title"] or "Role"
 
-    if to_drive:
-        try:
-            links = oauth.upload_drafts(conn, company, title,
-                                        _docx_bytes(build_resume_docx(resume_md)),
-                                        _docx_bytes(build_cover_docx(cover_md)))
-            store.record_draft(conn, job["id"], company=company, title=title, dir=links["folder"],
-                               drive_url=links["folder"], resume_url=links["resume_url"],
-                               cover_url=links["cover_url"], model=model)
-            return {"where": "drive", **links}
-        except oauth.OAuthError as e:
-            print(f"   (Drive sign-in needed — {e} Saving locally for now.)")
-        except Exception as e:  # never lose the generated draft over a Drive hiccup
-            print(f"   (Drive upload failed — {e}; saving locally instead.)")
+    if to_drive and oauth.is_authorized():
+        # Signed in => drafts ALWAYS go to Drive. Retry a transient blip; on a real
+        # failure surface a clear error (never silently save locally).
+        err = None
+        for _attempt in range(3):
+            try:
+                links = oauth.upload_drafts(conn, company, title,
+                                            _docx_bytes(build_resume_docx(resume_md)),
+                                            _docx_bytes(build_cover_docx(cover_md)))
+                store.record_draft(conn, job["id"], company=company, title=title, dir=links["folder"],
+                                   drive_url=links["folder"], resume_url=links["resume_url"],
+                                   cover_url=links["cover_url"], model=model)
+                return {"where": "drive", **links}
+            except oauth.OAuthError as e:
+                raise llm.LLMError(f"Google Drive sign-in expired — run `job-agent auth`, then retry. ({e})")
+            except Exception as e:  # noqa: BLE001
+                if "quota" in str(e).lower():  # account storage full — retrying won't help
+                    raise llm.LLMError("Your Google account storage is full, so the draft can't be saved to "
+                                       "Drive. Free up space (it's Gmail/Photos using it, not Drive) or "
+                                       "upgrade your plan, then click Draft again.")
+                err = e  # transient — retry
+        raise llm.LLMError(f"Drive upload failed after 3 tries ({err}). Drafts are Drive-only — please retry.")
+    if to_drive:  # not signed in at all -> local fallback so a draft is never lost
+        print("   (Not signed in to Google Drive — run `job-agent auth`. Saving locally for now.)")
 
     return _save_local(conn, job, company, title, resume_md, cover_md, omitted, model)
 

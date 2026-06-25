@@ -185,7 +185,7 @@ _ACTIONS_JS = """
     } else if(b.dataset.kind==='draft'){
       var jid=b.dataset.id; b.disabled=true; b.textContent='Drafting…';
       post('/api/job/'+jid+'/draft').then(function(res){
-        if(!res.ok){ b.disabled=false; b.textContent='retry'; return; }
+        if(!res.ok){ b.disabled=false; b.textContent='retry'; b.title=res.error||'failed'; if(res.error)alert(res.error); return; }
         if(!/^https?:/.test(res.folder||'')){ b.textContent='Saved locally'; b.disabled=true; return; }
         var a=document.createElement('a'); a.className='btn draftlink'; a.href=res.folder;
         a.target='_blank'; a.rel='noopener'; a.textContent='📄 Drafts';

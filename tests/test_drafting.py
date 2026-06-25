@@ -107,6 +107,7 @@ class TestGenerateForRole(unittest.TestCase):
         links = {"folder": "https://drive.google.com/drive/folders/sub456",
                  "resume_url": "https://docs/r", "cover_url": "https://docs/c"}
         with mock.patch.object(drafting.llm, "complete_text", return_value=FAKE_DRAFT), \
+             mock.patch.object(drafting.oauth, "is_authorized", return_value=True), \
              mock.patch.object(drafting.oauth, "upload_drafts", return_value=links) as up:
             res = drafting.generate_for_role(self.conn, job, MASTER, VOICE, model="x")  # to_drive default
         self.assertEqual(res["where"], "drive")
