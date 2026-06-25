@@ -184,7 +184,7 @@ _ACTIONS_JS = """
       post('/api/job/'+id+'/'+act).then(function(res){
         if(!res.ok){b.disabled=false; b.textContent='retry'; return;}
         if(act==='reject'){ card.classList.add('removing'); setTimeout(function(){card.remove(); if(window.applyFilters)window.applyFilters();},220); }
-        else if(act==='save'){ card.classList.add('is-saved'); b.parentNode.innerHTML='<span class="savedtag">Saved \\u2713</span> <button class="btn" data-kind="job" data-id="'+id+'" data-act="undo">undo</button>'; }
+        else if(act==='save'){ card.classList.add('is-saved'); b.outerHTML='<span class="savedtag">Saved \\u2713</span> <button class="btn" data-kind="job" data-id="'+id+'" data-act="undo" title="Undo save">undo</button>'; }
         else if(act==='undo'){ location.reload(); }
       });
     } else if(b.dataset.kind==='draft'){
