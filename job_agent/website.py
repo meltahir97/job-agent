@@ -170,11 +170,6 @@ _JS = """
 _ACTIONS_JS = """
 (function(){
   function post(u,b){return fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(function(r){return r.json();});}
-  function revealForm(wrap){
-    var f=document.createElement('div'); f.className='slugform';
-    f.innerHTML='<select class="f-ats"><option value="greenhouse">greenhouse</option><option value="lever">lever</option><option value="ashby">ashby</option><option value="workable">workable</option><option value="smartrecruiters">smartrecruiters</option><option value="workday">workday</option></select> <input class="f-slug" placeholder="board slug"> <button class="btn app" data-kind="sug" data-act="approve">Add</button>';
-    wrap.querySelector('.sugact').appendChild(f);
-  }
   document.addEventListener('click',function(e){
     var b=e.target.closest('button.btn'); if(!b) return;
     e.preventDefault(); e.stopPropagation();
@@ -198,11 +193,8 @@ _ACTIONS_JS = """
       });
     } else if(b.dataset.kind==='sug'){
       var wrap=b.closest('.sug'), sid=wrap.dataset.id, act=b.dataset.act, msg=wrap.querySelector('.sugmsg');
-      if(act==='approve' && !wrap.dataset.ats && !wrap.querySelector('.slugform')){ revealForm(wrap); return; }
-      var body={}, form=wrap.querySelector('.slugform');
-      if(act==='approve' && form){ body.ats=form.querySelector('.f-ats').value; body.slug=form.querySelector('.f-slug').value.trim(); if(!body.slug){ if(msg)msg.textContent='enter a slug'; return; } }
-      b.disabled=true;
-      post('/api/suggestion/'+sid+'/'+act,body).then(function(res){
+      b.disabled=true; if(act==='approve' && msg){ msg.textContent='adding…'; }
+      post('/api/suggestion/'+sid+'/'+act).then(function(res){  // server auto-detects the board — no slug needed
         if(!res.ok){ b.disabled=false; if(msg)msg.textContent=(res.message||res.error||'error'); return; }
         wrap.classList.add('removing'); setTimeout(function(){wrap.remove();},220);
       });
@@ -306,8 +298,8 @@ def _suggestions_section(suggestions, interactive: bool = False) -> str:
             f'{action}</div>'
         )
     note = ("Verified to a real feed or careers page. Click <b>Approve</b> to add one to your "
-            "watchlist (you'll be asked for a board slug if it has no auto-detected feed), or "
-            "<b>Dismiss</b> to hide it. Nothing is added automatically."
+            "watchlist (its job board is detected automatically) or <b>Dismiss</b> to hide it. "
+            "Nothing is added automatically."
             if interactive else
             "Proposed by weekly discovery — verified to a real feed or careers page. In your "
             "terminal, run <code>job-agent approve &lt;id&gt;</code> to add one or "

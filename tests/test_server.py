@@ -72,13 +72,20 @@ class TestSuggestionActions(unittest.TestCase):
             self.assertTrue(res["ok"])
             self.assertIn("Patreon", yml.read_text())
 
-    def test_approve_without_slug_is_422(self):
+    def test_approve_without_slug_auto_adds_no_prompt(self):
+        from job_agent import discovery
         store.add_suggestion(self.conn, company="EA", norm_name="ea", reason="r",
                              evidence_url="https://ea", ats=None, slug=None, status="proposed")
         sid = store.list_suggestions(self.conn, "proposed")[0]["id"]
-        code, res = server.suggestion_action(self.conn, sid, "approve")
-        self.assertEqual(code, 422)
-        self.assertFalse(res["ok"])
+        with tempfile.TemporaryDirectory() as td:
+            yml = Path(td) / "companies.yaml"
+            yml.write_text("companies:\n  - name: Seed\n    ats: greenhouse\n    slug: seed\n")
+            with mock.patch.object(config, "COMPANIES_PATH", yml), \
+                 mock.patch.object(discovery, "_auto_resolve_board", return_value=(None, None)):
+                code, res = server.suggestion_action(self.conn, sid, "approve")
+            self.assertEqual(code, 200)            # never 422 — no slug ever requested
+            self.assertTrue(res["ok"])
+            self.assertIn("ats: auto", yml.read_text())
 
 
 class TestDraftAction(unittest.TestCase):

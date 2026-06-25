@@ -155,13 +155,28 @@ def approve(conn: sqlite3.Connection, sid: int, *, ats: Optional[str] = None, sl
     ats = ats or s["ats"]
     slug = slug or s["slug"]
     if not (ats and slug):
-        return (f"'{s['company']}' has no resolved board. Re-run with "
-                f"--ats <greenhouse|lever|ashby|workable|smartrecruiters|workday> --slug <board-slug>.")
-    line = f'  - name: "{s["company"]}"\n    ats: {ats}\n    slug: {slug}\n'
+        ats, slug = _auto_resolve_board(s["company"])  # never ask the user for a slug
+    if ats and slug:
+        entry = f'  - name: "{s["company"]}"\n    ats: {ats}\n    slug: {slug}\n'
+        msg = f"approved '{s['company']}' → companies.yaml ({ats}:{slug})"
+    else:  # no detectable board — add as auto so the watchlist keeps trying to resolve it
+        entry = f'  - name: "{s["company"]}"\n    ats: auto\n'
+        msg = f"approved '{s['company']}' → companies.yaml (auto-detecting its job board)"
     with open(config.COMPANIES_PATH, "a", encoding="utf-8") as fh:
-        fh.write(line)
+        fh.write(entry)
     store.set_suggestion_status(conn, sid, "approved")
-    return f"approved '{s['company']}' -> companies.yaml ({ats}:{slug})"
+    return msg
+
+
+def _auto_resolve_board(name: str):
+    """Best-effort: find a company's (ats, slug) by probing public ATS boards, so the
+    user never has to supply a slug. Returns (None, None) if nothing resolves."""
+    try:
+        import requests
+        r = resolver_mod.resolve_company(Company(name=name, ats="auto"), requests.Session())
+        return (r.ats, r.slug) if (r.ok and r.slug) else (None, None)
+    except Exception:
+        return (None, None)
 
 
 def dismiss(conn: sqlite3.Connection, sid: int) -> str:

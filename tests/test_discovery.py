@@ -84,12 +84,32 @@ class TestDiscovery(unittest.TestCase):
             self.assertIn("slug: resolvedco", text)
             self.assertEqual(store.get_suggestion(self.conn, sid)["status"], "approved")
 
-    def test_approve_without_slug_prompts(self):
+    def test_approve_without_slug_auto_resolves_then_falls_back_to_auto(self):
         store.add_suggestion(self.conn, company="CareersCo", norm_name="careersco", reason="x",
                              evidence_url="https://c", ats=None, slug=None, status="proposed")
         sid = store.list_suggestions(self.conn, "proposed")[0]["id"]
-        msg = discovery.approve(self.conn, sid)
-        self.assertIn("--slug", msg)
+        with tempfile.TemporaryDirectory() as td:
+            yml = Path(td) / "companies.yaml"
+            yml.write_text("companies:\n  - name: Seed\n    ats: greenhouse\n    slug: seed\n")
+            # 1) board auto-resolves -> added with the resolved slug (NO user input)
+            with mock.patch.object(config, "COMPANIES_PATH", yml), \
+                 mock.patch.object(discovery, "_auto_resolve_board", return_value=("greenhouse", "careersco")):
+                msg = discovery.approve(self.conn, sid)
+            self.assertIn("greenhouse:careersco", msg)
+            self.assertIn("slug: careersco", yml.read_text())
+
+        store.add_suggestion(self.conn, company="NoFeedCo", norm_name="nofeedco", reason="x",
+                             evidence_url=None, ats=None, slug=None, status="proposed")
+        sid2 = [s["id"] for s in store.list_suggestions(self.conn, "proposed")][0]
+        with tempfile.TemporaryDirectory() as td:
+            yml = Path(td) / "companies.yaml"
+            yml.write_text("companies:\n  - name: Seed\n    ats: greenhouse\n    slug: seed\n")
+            # 2) nothing resolves -> added as ats: auto (still never asks for a slug)
+            with mock.patch.object(config, "COMPANIES_PATH", yml), \
+                 mock.patch.object(discovery, "_auto_resolve_board", return_value=(None, None)):
+                msg = discovery.approve(self.conn, sid2)
+            self.assertIn("auto", msg.lower())
+            self.assertIn("ats: auto", yml.read_text())
 
     def test_website_consider_section(self):
         store.add_suggestion(self.conn, company="CareersCo", norm_name="careersco", reason="fits media",
