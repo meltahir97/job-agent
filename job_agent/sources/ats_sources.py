@@ -120,6 +120,47 @@ class LeverSource(_AtsSource):
 class AshbySource(_AtsSource):
     name = ats = "ashby"
 
+    # Some orgs (e.g. Whatnot) disable the public posting API but still host their
+    # board on jobs.ashbyhq.com — that board's public GraphQL endpoint lists the
+    # postings (slim records: no JD text, so triage scores the title).
+    _GQL_URL = "https://jobs.ashbyhq.com/api/non-user-graphql"
+    _GQL = ("query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) { "
+            "jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) "
+            "{ jobPostings { id title locationName employmentType } } }")
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        try:
+            jobs = super().fetch(query)
+            if jobs:
+                return jobs
+        except Exception:  # posting API 404s when the org disables it
+            jobs = []
+        try:
+            resp = self.session.post(self._GQL_URL, json={
+                "operationName": "ApiJobBoardWithTeams",
+                "variables": {"organizationHostedJobsPageName": self.slug},
+                "query": self._GQL,
+            }, headers={"User-Agent": _BROWSER_UA, "Content-Type": "application/json"},
+                timeout=self.timeout)
+            resp.raise_for_status()
+            board = (resp.json().get("data") or {}).get("jobBoard") or {}
+        except Exception:
+            return jobs
+        out: List[Job] = []
+        for p in board.get("jobPostings") or []:
+            pid = str(p.get("id") or "")
+            title = (p.get("title") or "").strip()
+            if not (pid and title):
+                continue
+            loc = p.get("locationName")
+            out.append(Job(
+                source=self.ats, source_job_id=pid, title=title, company=self.company,
+                location=loc, remote=_remote_from_text(loc, title), description=None,
+                url=f"https://jobs.ashbyhq.com/{self.slug}/{pid}",
+                contract_type=p.get("employmentType"), raw=p,
+            ))
+        return out
+
     def _normalize(self, raw: dict) -> Job:
         loc = raw.get("location")
         remote = True if raw.get("isRemote") else _remote_from_text(loc, raw.get("title"))
@@ -145,6 +186,22 @@ class AshbySource(_AtsSource):
 class WorkableSource(_AtsSource):
     name = ats = "workable"
 
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        try:
+            return super().fetch(query)
+        except Exception:
+            pass
+        # Some accounts (e.g. Linktree) close the SPI API (401) but keep the public
+        # widget API open — same job records, different door.
+        resp = self.session.get(
+            f"https://apply.workable.com/api/v1/widget/accounts/{self.slug}?details=true",
+            headers={"User-Agent": _BROWSER_UA, "Accept": "application/json"}, timeout=self.timeout)
+        resp.raise_for_status()
+        jobs = [self._normalize(r) for r in (resp.json().get("jobs") or [])]
+        if query and query.max_results:
+            jobs = jobs[: query.max_results]
+        return jobs
+
     def _normalize(self, raw: dict) -> Job:
         loc = raw.get("location")
         if isinstance(loc, dict):
@@ -154,6 +211,9 @@ class WorkableSource(_AtsSource):
         else:
             location = loc if isinstance(loc, str) else None
             telework = False
+        if not location:  # widget-API records carry city/state/country at the top level
+            location = ", ".join(p for p in (raw.get("city"), raw.get("state"), raw.get("country")) if p) or None
+        telework = telework or bool(raw.get("telecommuting"))
         remote = True if telework else _remote_from_text(location, raw.get("title"))
         return Job(
             source=self.ats,
@@ -433,8 +493,6 @@ class AppleSource(JobSource):
     _JOB = re.compile(
         r'aria-label="(?P<title>[^"]+?)\s+\d{6,}"\s+href="/en-us/details/(?P<id>[\d-]+)/'
         r'(?P<slug>[^"?]+?)(?:\?team=(?P<team>[A-Za-z0-9]+))?"')
-    DEFAULT_QUERIES = ["Apple TV", "Apple Music", "Apple Podcasts", "Apple News", "Apple Books",
-                       "Apple Sports", "content partnerships", "business affairs"]
     # Apple team codes that are never M&E business roles: Apple Store/retail, hardware, ML/AI eng.
     DROP_TEAMS = {"APPST", "HRDWR", "MLAI"}
     _DROP = re.compile(
@@ -445,38 +503,40 @@ class AppleSource(JobSource):
     _ME = re.compile(
         r"\b(apple tv|tv\+|music|podcast|news|sport|book|arcade|beats|original|content|"
         r"entertainment|video|streaming|media|fitness)\b", re.I)
-    MAX_PAGES = 3
+    MAX_PAGES = 12  # 20 jobs/page -> ~240 newest US roles scanned per run
 
     def __init__(self, slug=None, company="Apple", session=None, timeout: int = 25, **extra):
         self.company = company
         self.timeout = timeout
         self.session = session or requests.Session()
-        q = extra.get("queries")
-        self.queries = q if isinstance(q, list) and q else self.DEFAULT_QUERIES
         self.location = extra.get("location") or "United States"
 
     def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
-        out = {}
+        """Crawl the newest-first US list page by page and filter to M&E business
+        titles locally. (Since ~Jul 2026 Apple's server ignores search params — the
+        SPA filters client-side — but plain pagination still returns distinct,
+        newest-first server-rendered pages, so a crawl keeps working.)"""
+        out, seen = {}, set()
         headers = {"User-Agent": _BROWSER_UA, "Accept": "text/html"}
-        for q in self.queries:
-            for page in range(1, self.MAX_PAGES + 1):
-                params = {"search": q, "location": "united-states-USA", "page": page}
-                try:
-                    resp = self.session.get(self.BASE, params=params, headers=headers, timeout=self.timeout)
-                    resp.raise_for_status()
-                except requests.RequestException:
-                    break
-                found = list(self._JOB.finditer(resp.text))
-                if not found:
-                    break
-                for m in found:
-                    jid, title, team = m.group("id"), html.unescape(m.group("title")).strip(), (m.group("team") or "")
-                    if (jid in out or team in self.DROP_TEAMS or self._DROP.search(title)
-                            or not self._ME.search(title)):  # M&E roles only
-                        continue
-                    out[jid] = self._normalize(jid, m.group("slug"), title, team)
-                if len(found) < 10:
-                    break
+        for page in range(1, self.MAX_PAGES + 1):
+            params = {"location": "united-states-USA", "sort": "newest", "page": page}
+            try:
+                resp = self.session.get(self.BASE, params=params, headers=headers, timeout=self.timeout)
+                resp.raise_for_status()
+            except requests.RequestException:
+                break
+            new_ids = 0
+            for m in self._JOB.finditer(resp.text):
+                jid, title, team = m.group("id"), html.unescape(m.group("title")).strip(), (m.group("team") or "")
+                if jid in seen:
+                    continue
+                seen.add(jid)
+                new_ids += 1
+                if team in self.DROP_TEAMS or self._DROP.search(title) or not self._ME.search(title):
+                    continue  # M&E business roles only
+                out[jid] = self._normalize(jid, m.group("slug"), title, team)
+            if new_ids == 0:  # ran out of fresh pages
+                break
         return list(out.values())
 
     def _normalize(self, jid: str, slug: str, title: str, team: str) -> Job:
@@ -531,6 +591,46 @@ class SnapSource(JobSource):
         return out
 
 
+class BambooHRSource(JobSource):
+    """BambooHR hosted careers ({slug}.bamboohr.com) — public JSON at /careers/list.
+    List records are sparse (title / department / location; no JD text), so triage
+    scores the title. Detail URL: /careers/<id>. Missing fields stay None."""
+    name = ats = "bamboohr"
+
+    def __init__(self, slug: str, company: str, session=None, timeout: int = 20, **extra):
+        self.slug = slug
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        url = f"https://{self.slug}.bamboohr.com/careers/list"
+        resp = self.session.get(url, headers={"User-Agent": _BROWSER_UA, "Accept": "application/json"},
+                                timeout=self.timeout)
+        resp.raise_for_status()
+        out: List[Job] = []
+        for row in (resp.json().get("result") or []):
+            jid = str(row.get("id") or "")
+            title = (row.get("jobOpeningName") or "").strip()
+            if not (jid and title):
+                continue
+            loc = row.get("location")
+            if isinstance(loc, dict):
+                location = ", ".join(p for p in (loc.get("city"), loc.get("state"), loc.get("country")) if p) or None
+            else:
+                location = str(loc).strip() or None if loc else None
+            dept = row.get("departmentLabel") or row.get("departmentId")
+            remote = (True if str(row.get("isRemote") or "").lower() in ("1", "true", "yes")
+                      else _remote_from_text(location, title))
+            out.append(Job(
+                source=self.ats, source_job_id=jid, title=title, company=self.company,
+                location=location, remote=remote, description=None,
+                url=f"https://{self.slug}.bamboohr.com/careers/{jid}",
+                category=str(dept) if dept is not None else None, raw=row,
+            ))
+        return out
+
+
 SOURCE_BY_ATS = {
     "greenhouse": GreenhouseSource,
     "lever": LeverSource,
@@ -542,4 +642,5 @@ SOURCE_BY_ATS = {
     "netflix": NetflixSource,
     "apple": AppleSource,
     "snap": SnapSource,
+    "bamboohr": BambooHRSource,
 }

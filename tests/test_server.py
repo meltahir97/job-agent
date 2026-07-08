@@ -234,6 +234,82 @@ class TestNonMatchView(unittest.TestCase):
         conn.close()
 
 
+class TestWatchlistTracker(unittest.TestCase):
+    def test_feed_status_and_tracker_render(self):
+        conn = db.connect(":memory:")
+        db.init_db(conn)
+        jid = _job(conn)  # Roku job, deep-scored 90
+        store.upsert_feed_status(conn, company="Roku", ats="greenhouse", slug="roku",
+                                 ok=True, fetched=224, kept=48, error=None)
+        store.upsert_feed_status(conn, company="Overtime", ats=None, slug=None,
+                                 ok=False, fetched=0, kept=0,
+                                 error="no public job feed found yet")
+        html = server.render_page(conn)
+        self.assertIn("Watchlist health", html)
+        self.assertIn("1/2 feeds live", html)
+        self.assertIn("greenhouse:roku", html)
+        self.assertIn("no public job feed found yet", html)   # broken feed surfaced honestly
+        # funnel numbers joined in
+        funnel = {r["company"]: r for r in store.company_funnel(conn, 30)}
+        self.assertEqual(funnel["Roku"]["in_db"], 1)
+        self.assertEqual(funnel["Roku"]["surfaced"], 1)
+        # upsert replaces, not duplicates
+        store.upsert_feed_status(conn, company="Roku", ats="greenhouse", slug="roku",
+                                 ok=True, fetched=230, kept=50, error=None)
+        rows = store.list_feed_status(conn)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([r["fetched"] for r in rows if r["company"] == "Roku"], [230])
+        # never on the static page
+        page, _ = website.render_html([], interactive=False)
+        self.assertNotIn("Watchlist health", page)
+        conn.close()
+
+
+class TestNewSources(unittest.TestCase):
+    def test_bamboohr_parses_list(self):
+        from job_agent.sources.ats_sources import BambooHRSource
+
+        class FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"result": [
+                    {"id": "54", "jobOpeningName": "Head of Partnerships",
+                     "departmentLabel": "Business", "location": {"city": "San Francisco", "state": "CA"}},
+                    {"id": "55", "jobOpeningName": "", "location": None},  # no title -> skipped
+                ]}
+        class FakeSession:
+            def get(self, url, **kw):
+                assert url == "https://podcastle.bamboohr.com/careers/list"
+                return FakeResp()
+        jobs = BambooHRSource("podcastle", "Podcastle", session=FakeSession()).fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].title, "Head of Partnerships")
+        self.assertEqual(jobs[0].location, "San Francisco, CA")
+        self.assertEqual(jobs[0].url, "https://podcastle.bamboohr.com/careers/54")
+
+    def test_ashby_falls_back_to_graphql_when_posting_api_dead(self):
+        from job_agent.sources import ats_sources
+
+        class FakeResp:
+            status_code = 200
+            def raise_for_status(self): pass
+            def json(self):
+                return {"data": {"jobBoard": {"jobPostings": [
+                    {"id": "abc-123", "title": "Strategic Finance Lead",
+                     "locationName": "San Francisco", "employmentType": "FullTime"}]}}}
+        class FakeSession:
+            def post(self, url, **kw):
+                assert "non-user-graphql" in url
+                return FakeResp()
+        src = ats_sources.AshbySource("whatnot", "Whatnot", session=FakeSession())
+        with mock.patch.object(ats_sources.ats_mod, "raw_jobs", side_effect=RuntimeError("404")):
+            jobs = src.fetch()
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0].title, "Strategic Finance Lead")
+        self.assertEqual(jobs[0].url, "https://jobs.ashbyhq.com/whatnot/abc-123")
+
+
 class TestInteractiveRender(unittest.TestCase):
     def test_interactive_has_buttons_static_has_commands(self):
         conn = db.connect(":memory:")

@@ -87,6 +87,13 @@ def _run_watchlist(conn):
         _, is_new = store.upsert_job(conn, job)
         new += int(is_new)
 
+    for r in report.results:  # persist per-company feed health for the tracker UI
+        res = r.resolution
+        store.upsert_feed_status(
+            conn, company=r.company, ats=(res.ats or None), slug=(res.slug or None),
+            ok=bool(res.ok and not r.error), fetched=r.fetched, kept=r.kept,
+            error=(r.error or (None if res.ok else (res.detail or "no public job feed found yet"))))
+
     for up in _upgrade_auto_entries(report):
         print(f"    ⚙ pinned job board in companies.yaml: {up}")
     for r in report.fetched_ok:

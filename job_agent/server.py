@@ -129,14 +129,18 @@ def draft_action(conn, job_id: int) -> Tuple[int, dict]:
 
 
 def render_page(conn, include_all: bool = False) -> str:
+    from . import config
+
     rows = website.select_all_scored(conn) if include_all else website.select_master(conn)
     applied = store.applied_job_ids(conn)
     rows = [r for r in rows if r["id"] not in applied]  # applied roles live in their own section
     suggestions = store.list_suggestions(conn, "proposed")
     applications = store.list_applications(conn)
     notes = {a["id"]: store.list_app_notes(conn, a["id"]) for a in applications}
+    feed = store.list_feed_status(conn)
+    funnel = {r["company"]: r for r in store.company_funnel(conn, config.TIER_LOOK_MIN)}
     page, _ = website.render_html(rows, suggestions=suggestions, interactive=True, include_all=include_all,
-                                  applications=applications, app_notes=notes)
+                                  applications=applications, app_notes=notes, feed=feed, funnel=funnel)
     return page
 
 

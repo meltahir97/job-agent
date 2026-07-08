@@ -33,21 +33,11 @@ companies:
   - name: Epic Games
     ats: greenhouse
     slug: epicgames
-  # Apple — no public ATS; custom `apple` source scrapes jobs.apple.com search results.
-  # HEADS-UP (2026-07-06): Apple moved search fully client-side (SSR ignores query params;
-  # the internal /api/v1/search rejects non-browser calls), so this source currently
-  # returns 0. Kept so `job-agent doctor` keeps checking whether scraping works again.
+  # Apple — no public ATS. Apple's search went client-side (~Jul 2026) so text queries
+  # are ignored server-side; the `apple` source now CRAWLS the newest-first US list
+  # (~240 newest roles per run) and filters to M&E business titles locally.
   - name: "Apple (Media & Entertainment)"
     ats: apple
-    queries:
-      - "Apple TV"
-      - "Apple Music"
-      - "Apple Podcasts"
-      - "Apple News"
-      - "Apple Sports"
-      - "content partnerships"
-      - "business affairs"
-      - "media partnerships"
 
   # --- Tier 2 ---
   - name: Spotify
@@ -117,18 +107,15 @@ companies:
       - "media partnerships"
       - "media strategy and operations"
       - "content partnerships"
-  # Unity — left Greenhouse (unity3d AND unity both 404 now, verified 2026-07-06); their
-  # careers site is a JS app with no public feed the resolver can reach. Commented out so
-  # it doesn't error every run; re-add if a public feed surfaces.
-  # - name: "Unity Technologies"
-  #   ats: greenhouse
-  #   slug: unity3d
-  # Electronic Arts (EA) — no public ATS feed (greenhouse/lever/ashby/workday/SmartRecruiters
-  # all 404/empty); ea.com/careers is a custom site. Would need a dedicated scraper like
-  # Apple/Google. Commented out so it doesn't error every run; re-add if a feed is built.
-  # - name: "Electronic Arts (EA)"
-  #   ats: greenhouse
-  #   slug: EA
+  # Unity — left Greenhouse (unity3d/unity both 404, verified 2026-07-06); careers site
+  # is a JS app with no reachable public feed. Kept as `auto` so the resolver re-probes
+  # every run and the Watchlist-health tracker shows it honestly.
+  - name: "Unity Technologies"
+    ats: auto
+  # EA — no public ATS feed; careers.ea.com is Phenom behind Cloudflare (widget API 403s
+  # non-browser calls, verified 2026-07-08). Kept as `auto` — tracked, re-probed every run.
+  - name: "Electronic Arts (EA)"
+    ats: auto
   - name: "Digital Eclipse"
     ats: greenhouse
     slug: digitaleclipse
@@ -140,17 +127,26 @@ companies:
   # Snap — custom `snap` source (careers.snap.com JSON API; Workday-backed).
   - name: "Snap Inc."
     ats: snap
+  # Whatnot disabled Ashby's public posting API, but their hosted board still answers
+  # the public GraphQL endpoint (130 postings, verified 2026-07-08) — the ashby source
+  # falls back to it automatically.
   - name: "Whatnot"
-    ats: auto
+    ats: ashby
+    slug: whatnot
   - name: "Fandom (formerly Wikia)"
     ats: greenhouse
     slug: fandom
+  # Linktree's Workable account is live but currently lists 0 openings — pinned so
+  # roles flow in the moment they post.
   - name: "Linktree"
-    ats: auto
+    ats: workable
+    slug: linktree
+  # Overtime — careers page is a JS app with no reachable feed (JazzHR page is parked).
   - name: "Overtime"
     ats: auto
   - name: "Podcastle"
-    ats: auto
+    ats: bamboohr
+    slug: podcastle
   - name: "Strava"
     ats: ashby
     slug: strava
@@ -160,3 +156,27 @@ companies:
   - name: "Beacons"
     ats: ashby
     slug: beacons
+  # CAUGHT 2026-07-08: greenhouse:thrive is a DIFFERENT company ("THRIVE"), not Thrive
+  # Fantasy — auto-resolve guessed wrong (resolver now has an ownership gate for this).
+  # No real board found (site 403s; may be defunct).
+  - name: "Thrive Fantasy"
+    ats: auto
+  # Audiomack — no careers feed found (audiomack.com/jobs is music content, not jobs).
+  - name: "Audiomack"
+    ats: auto
+  - name: "Niantic Spatial"
+    ats: ashby
+    slug: niantic-spatial
+  # UnitedMasters' own careers page embeds this Greenhouse board (verified 2026-07-08).
+  - name: "UnitedMasters"
+    ats: greenhouse
+    slug: unitedmasterstranslation
+
+  # --- User-requested 2026-07-08 ---
+  # PlayStation = Sony Interactive Entertainment's global Greenhouse board (187 roles).
+  - name: "PlayStation"
+    ats: greenhouse
+    slug: sonyinteractiveentertainmentglobal
+  - name: "Inkitt"
+    ats: lever
+    slug: inkitt

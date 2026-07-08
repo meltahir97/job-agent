@@ -57,3 +57,19 @@ class TestResolve(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestOwnershipGate(unittest.TestCase):
+    """A live board that belongs to a DIFFERENT company must never be accepted
+    (regression: 'Thrive Fantasy' matched an unrelated 'thrive' Greenhouse board)."""
+
+    def test_no_bare_first_word_candidate(self):
+        self.assertNotIn("thrive", resolver.candidate_slugs("Thrive Fantasy"))
+        self.assertIn("thrivefantasy", resolver.candidate_slugs("Thrive Fantasy"))
+
+    def test_same_company_gate(self):
+        self.assertFalse(resolver._same_company("Thrive Fantasy", "THRIVE"))
+        self.assertTrue(resolver._same_company("Crunchyroll (Sony)", "Crunchyroll, LLC"))
+        self.assertTrue(resolver._same_company("PlayStation", "PlayStation Global"))
+        self.assertTrue(resolver._same_company("Fandom (formerly Wikia)", "Fandom"))
+        self.assertTrue(resolver._same_company("Whatnot", None))  # unverifiable -> allowed

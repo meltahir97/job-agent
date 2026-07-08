@@ -39,11 +39,44 @@ def candidate_slugs(name: str) -> List[str]:
     words = [w for w in re.sub(r"[^a-z0-9 ]+", " ", name.lower()).split() if w]
     core = [w for w in words if w not in _SUFFIXES] or words
     out: List[str] = []
-    for c in ("".join(words), "".join(core), "-".join(core), "-".join(words), core[0] if core else ""):
+    # NOTE: no bare-first-word candidate — "Thrive Fantasy" must never match some other
+    # company's live "thrive" board. Full-name joins only; identity re-checked below.
+    for c in ("".join(words), "".join(core), "-".join(core), "-".join(words)):
         c = c.strip("-")
         if c and c not in out:
             out.append(c)
     return out[:4]
+
+
+def _norm_join(s: str) -> str:
+    s = re.sub(r"\([^)]*\)", " ", s or "")  # "(Sony)", "(formerly Wikia)" are annotations
+    return "".join(w for w in re.sub(r"[^a-z0-9 ]+", " ", s.lower()).split()
+                   if w not in _SUFFIXES)
+
+
+def _same_company(display_name: str, board_name: Optional[str]) -> bool:
+    """Ownership gate: does the board's own display name plausibly belong to this
+    company? One normalized name must contain the other and lengths must be close —
+    'thrivefantasy' vs 'thrive' fails; 'crunchyrollsony' vs 'crunchyroll' passes."""
+    if not board_name:
+        return True  # board exposes no name — nothing to check against
+    a, b = _norm_join(display_name), _norm_join(board_name)
+    if not a or not b:
+        return True
+    if a not in b and b not in a:
+        return False
+    return min(len(a), len(b)) / max(len(a), len(b)) >= 0.6
+
+
+def _greenhouse_board_name(slug: str, session, timeout: int) -> Optional[str]:
+    try:
+        r = session.get(f"https://boards-api.greenhouse.io/v1/boards/{slug}",
+                        timeout=timeout, headers={"User-Agent": "job-agent/0.1 (board resolver)"})
+        if r.status_code == 200:
+            return (r.json().get("name") or "").strip() or None
+    except Exception:  # noqa: BLE001
+        pass
+    return None
 
 
 def resolve_company(company: Company, session, *, atses: Optional[List[str]] = None, timeout: int = 10) -> Resolution:
@@ -59,6 +92,9 @@ def resolve_company(company: Company, session, *, atses: Optional[List[str]] = N
             # Workable's public endpoint returns 200+empty for ANY account, so an empty
             # board is indistinguishable from "no board" — only trust it when n > 0.
             if n is not None and (ats != "workable" or n > 0):
+                if ats == "greenhouse" and not _same_company(
+                        company.name, _greenhouse_board_name(slug, session, timeout)):
+                    continue  # live board, but it belongs to a DIFFERENT company
                 return Resolution(
                     company.name, ats, slug, "resolved", n, f"{ats}:{slug} ({n} open roles)",
                 )

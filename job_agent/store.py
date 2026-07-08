@@ -283,6 +283,49 @@ def delete_app_note(conn: sqlite3.Connection, note_id: int) -> None:
     conn.commit()
 
 
+# --- watchlist feed health (refreshed every run; drives the tracker UI) ------
+
+def upsert_feed_status(conn: sqlite3.Connection, *, company, ats, slug, ok,
+                       fetched, kept, error) -> None:
+    conn.execute(
+        "INSERT INTO feed_status (company, ats, slug, ok, fetched, kept, error, checked_at) "
+        "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(company) DO UPDATE SET ats=excluded.ats, "
+        "slug=excluded.slug, ok=excluded.ok, fetched=excluded.fetched, kept=excluded.kept, "
+        "error=excluded.error, checked_at=excluded.checked_at",
+        (company, ats, slug, int(bool(ok)), int(fetched or 0), int(kept or 0), error, now_iso()),
+    )
+    conn.commit()
+
+
+def list_feed_status(conn: sqlite3.Connection):
+    return conn.execute("SELECT * FROM feed_status ORDER BY ok, company COLLATE NOCASE").fetchall()
+
+
+def company_funnel(conn: sqlite3.Connection, look_min: int):
+    """Per company (as named by the watchlist): jobs in DB -> deep-scored -> surfaced
+    (tier-worthy) -> user decisions. Powers the watchlist-health tracker."""
+    return conn.execute(
+        """SELECT j.company AS company,
+                  COUNT(*) AS in_db,
+                  MAX(j.last_seen_at) AS last_seen,
+                  SUM(CASE WHEN d.fit_score IS NOT NULL THEN 1 ELSE 0 END) AS deep_scored,
+                  SUM(CASE WHEN d.fit_score >= :look AND COALESCE(d.label,'') != 'skip'
+                      THEN 1 ELSE 0 END) AS surfaced,
+                  SUM(CASE WHEN f.decision = 'dismissed' THEN 1 ELSE 0 END) AS rejected,
+                  SUM(CASE WHEN a.job_id IS NOT NULL THEN 1 ELSE 0 END) AS applied
+           FROM jobs j
+           LEFT JOIN (SELECT s.job_id, s.fit_score, s.label FROM scores s
+                      WHERE s.stage = 'deep' AND s.id =
+                            (SELECT MAX(s2.id) FROM scores s2
+                             WHERE s2.job_id = s.job_id AND s2.stage = 'deep')) d
+                  ON d.job_id = j.id
+           LEFT JOIN feedback f ON f.job_id = j.id
+           LEFT JOIN applications a ON a.job_id = j.id
+           GROUP BY j.company""",
+        {"look": look_min},
+    ).fetchall()
+
+
 # --- company-discovery suggestions (propose-only) ---------------------------
 
 def add_suggestion(conn: sqlite3.Connection, *, company, norm_name, reason,

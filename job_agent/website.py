@@ -151,6 +151,18 @@ details.notes>summary:before{content:'▸ '}details.notes[open]>summary:before{c
 .notedel{padding:1px 6px;font-size:11px;color:var(--muted)}
 .noteform{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
 .noteform input{flex:1;min-width:180px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px}
+details.watchlist{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:10px 0;padding:0}
+details.watchlist>summary{cursor:pointer;padding:10px 12px;font-weight:600;font-size:14px;list-style:none}
+details.watchlist>summary::-webkit-details-marker{display:none}
+details.watchlist>summary:before{content:'▸ '}details.watchlist[open]>summary:before{content:'▾ '}
+.feedwrap{padding:0 12px 10px}
+.feedrow{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;padding:5px 0;border-top:1px dashed var(--line);font-size:13px}
+.feedrow .dot{flex:none;font-size:11px}.feedrow .dot.ok{color:var(--strong)}.feedrow .dot.bad{color:var(--new)}
+.feedrow .board{color:var(--muted);font-size:11.5px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.feedrow .nums{color:var(--muted);font-size:12px}.feedrow .nums b{color:var(--ink)}
+.feedrow.bad .nums{opacity:.6}
+.feedwhy{flex-basis:100%;color:var(--new);font-size:11.5px;padding-left:18px}
+.feedlegend{color:var(--muted);font-size:11.5px;padding:8px 0 2px}
 @media(max-width:520px){.t{flex-basis:100%}}
 """
 
@@ -316,6 +328,39 @@ def _card(row: sqlite3.Row, interactive: bool = False) -> str:
     return "".join(s)
 
 
+def _watchlist_section(feed, funnel) -> str:
+    """'Watchlist health' — every tracked company: is its feed live, how many roles
+    came through the last fetch, and the scoring funnel (in DB → scored → surfaced).
+    Local app only."""
+    if not feed:
+        return ""
+    live = sum(1 for f in feed if f["ok"])
+    checked = max((f["checked_at"] or "" for f in feed), default="")[:16].replace("T", " ")
+    rows = []
+    for f in sorted(feed, key=lambda r: ((r["ok"], (r["company"] or "").lower()))):
+        agg = funnel.get(f["company"])
+        board = (f'{f["ats"]}:{f["slug"]}' if f["ats"] and f["slug"]
+                 else (f["ats"] or "?"))
+        dot = '<span class="dot ok">●</span>' if f["ok"] else '<span class="dot bad">●</span>'
+        nums = (f'fetched <b>{f["fetched"]}</b> · in-scope <b>{f["kept"]}</b>'
+                + (f' · in DB <b>{agg["in_db"]}</b> · scored <b>{agg["deep_scored"] or 0}</b>'
+                   f' · surfaced <b>{agg["surfaced"] or 0}</b>' if agg else "")
+                + ((f' · applied <b>{agg["applied"]}</b>') if agg and agg["applied"] else "")
+                + ((f' · rejected {agg["rejected"]}') if agg and agg["rejected"] else ""))
+        why = ("" if f["ok"] else
+               f'<div class="feedwhy">{html.escape(f["error"] or "no public job feed found yet")}</div>')
+        rows.append(f'<div class="feedrow{"" if f["ok"] else " bad"}">{dot} '
+                    f'<b>{html.escape(f["company"])}</b> <span class="board">{html.escape(board)}</span>'
+                    f'<span class="sp"></span><span class="nums">{nums}</span>{why}</div>')
+    legend = ('<div class="feedlegend">fetched = roles the feed returned last run · in-scope = after the '
+              'Bay-Area/remote filter · in DB = stored all-time · scored = deep-scored · surfaced = made a tier. '
+              'Red rows have no working feed — the agent re-checks them every run.</div>')
+    return ('<details class="watchlist"><summary>🏢 Watchlist health '
+            f'<span style="color:var(--muted);font-weight:400">({live}/{len(feed)} feeds live · '
+            f'checked {html.escape(checked)})</span></summary>'
+            f'<div class="feedwrap">{legend}{"".join(rows)}</div></details>')
+
+
 _STATUS_LABELS = (("applied", "Applied"), ("interviewing", "Interviewing"), ("offer", "Offer"),
                   ("rejected", "Rejected"), ("withdrawn", "Withdrawn"))
 
@@ -411,7 +456,7 @@ def _suggestions_section(suggestions, interactive: bool = False) -> str:
 
 def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None,
                 suggestions=None, interactive: bool = False, include_all: bool = False,
-                applications=None, app_notes=None) -> Tuple[str, dict]:
+                applications=None, app_notes=None, feed=None, funnel=None) -> Tuple[str, dict]:
     generated_at = generated_at or datetime.now().astimezone()
     buckets = {t: [r for r in rows if tier_for(r["fit_score"], r["label"]) == t] for t in ORDER}
     other = [r for r in rows if tier_for(r["fit_score"], r["label"]) is None]
@@ -441,8 +486,9 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
             f"</h2>{cards}</section>"
         )
     body = "".join(sections) or '<p class="m">No in-scope roles yet — run the pipeline.</p>'
-    # applications (with personal notes) render ONLY in the local app, never on the public page
+    # applications (personal notes) + watchlist health render ONLY in the local app
     apps_html = _applications_section(applications or [], app_notes or {}) if interactive else ""
+    watch_html = _watchlist_section(feed or [], funnel or {}) if interactive else ""
     consider = _suggestions_section(suggestions or [], interactive)
     co_opts = "".join(f'<option value="{_attr(c)}">{html.escape(c)}</option>' for c in companies)
     if interactive:
@@ -476,6 +522,7 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
 </div>
 <div id="count"></div>
 <p class="help">{help_html}</p>
+{watch_html}
 {apps_html}
 <main>{body}</main>
 {consider}

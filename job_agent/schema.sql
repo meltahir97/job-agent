@@ -122,3 +122,16 @@ CREATE TABLE IF NOT EXISTS app_notes (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_app_notes_job ON app_notes (job_id);
+
+-- Watchlist feed health, refreshed every pipeline run: is each tracked company's
+-- board actually reachable, and how many roles came through last fetch?
+CREATE TABLE IF NOT EXISTS feed_status (
+    company    TEXT PRIMARY KEY,
+    ats        TEXT,
+    slug       TEXT,
+    ok         INTEGER NOT NULL DEFAULT 0,
+    fetched    INTEGER NOT NULL DEFAULT 0,             -- roles the feed returned
+    kept       INTEGER NOT NULL DEFAULT 0,             -- survived the location filter
+    error      TEXT,                                   -- why it's broken / unresolved
+    checked_at TEXT NOT NULL
+);
