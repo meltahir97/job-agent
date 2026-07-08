@@ -119,6 +119,102 @@ class TestDraftAction(unittest.TestCase):
         self.assertTrue(res.get("existing"))
 
 
+class TestApplications(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init_db(self.conn)
+        self.jid = _job(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_applied_flow_status_and_notes(self):
+        self.assertEqual(server.job_action(self.conn, self.jid, "applied")[0], 200)
+        self.assertIn(self.jid, store.applied_job_ids(self.conn))
+        self.assertEqual(store.get_application(self.conn, self.jid)["status"], "applied")
+        # applying also records a positive feedback signal for future scoring
+        fb = self.conn.execute("SELECT decision FROM feedback WHERE job_id=?", (self.jid,)).fetchone()
+        self.assertEqual(fb["decision"], "saved")
+        # status pipeline
+        self.assertEqual(server.application_update(self.conn, self.jid, "interviewing")[0], 200)
+        self.assertEqual(store.get_application(self.conn, self.jid)["status"], "interviewing")
+        self.assertEqual(server.application_update(self.conn, self.jid, "bogus")[0], 400)
+        self.assertEqual(server.application_update(self.conn, 999999, "offer")[0], 404)
+        # notes + to-dos
+        code, _ = server.note_add(self.conn, self.jid, {"text": "sent follow-up", "kind": "note"})
+        self.assertEqual(code, 200)
+        code, res = server.note_add(self.conn, self.jid, {"text": "prep case study", "kind": "todo"})
+        nid = res["id"]
+        self.assertEqual(server.note_add(self.conn, self.jid, {"text": "  "})[0], 400)
+        self.assertEqual(server.note_action(self.conn, nid, "toggle", {"done": True})[0], 200)
+        notes = store.list_app_notes(self.conn, self.jid)
+        self.assertEqual(len(notes), 2)
+        self.assertEqual([n["done"] for n in notes if n["kind"] == "todo"], [1])
+        self.assertEqual(server.note_action(self.conn, nid, "delete", {})[0], 200)
+        self.assertEqual(len(store.list_app_notes(self.conn, self.jid)), 1)
+        # untrack (notes are kept)
+        self.assertEqual(server.job_action(self.conn, self.jid, "unapply")[0], 200)
+        self.assertNotIn(self.jid, store.applied_job_ids(self.conn))
+        self.assertEqual(len(store.list_app_notes(self.conn, self.jid)), 1)
+
+    def test_page_moves_applied_role_to_tracker(self):
+        server.job_action(self.conn, self.jid, "applied")
+        server.note_add(self.conn, self.jid, {"text": "waiting on recruiter", "kind": "note"})
+        html = server.render_page(self.conn)
+        self.assertIn("Applications", html)                    # tracker section present
+        self.assertIn("waiting on recruiter", html)            # note rendered
+        self.assertIn('class="appst"', html)                   # status dropdown
+        self.assertEqual(html.count("Director, Corp Dev"), 1)  # only in tracker, not the role list
+
+    def test_applications_never_on_static_page(self):
+        server.job_action(self.conn, self.jid, "applied")
+        server.note_add(self.conn, self.jid, {"text": "personal note", "kind": "note"})
+        page, _ = website.render_html(website.select_master(self.conn), interactive=False)
+        self.assertNotIn("personal note", page)
+
+
+class TestDraftDedupe(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        db.init_db(self.conn)
+        self.jid = _job(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_local_draft_migrates_without_regenerating(self):
+        with tempfile.TemporaryDirectory() as td:
+            r, c = Path(td) / "resume.docx", Path(td) / "cover_letter.docx"
+            r.write_bytes(b"resume-bytes")
+            c.write_bytes(b"cover-bytes")
+            store.record_draft(self.conn, self.jid, company="Roku", title="Director, Corp Dev",
+                               dir=td, resume_docx=r, cover_docx=c, model="m")
+            links = {"folder": "https://drive.google.com/drive/folders/mig1",
+                     "resume_url": "https://docs/r", "cover_url": "https://docs/c"}
+            with mock.patch.object(drafting.oauth, "is_authorized", return_value=True), \
+                 mock.patch.object(drafting.oauth, "upload_drafts", return_value=links) as up, \
+                 mock.patch.object(drafting.llm, "complete_text",
+                                   side_effect=AssertionError("must NOT regenerate")):
+                code, res = server.draft_action(self.conn, self.jid)
+        self.assertEqual(code, 200)
+        self.assertIn("mig1", res["folder"])
+        # the ORIGINAL bytes were uploaded (same pair, not a new generation)
+        self.assertEqual(up.call_args.args[3], b"resume-bytes")
+        self.assertEqual(store.get_draft(self.conn, self.jid)["drive_url"], links["folder"])
+
+    def test_same_role_under_new_id_reuses_draft(self):
+        store.record_draft(self.conn, self.jid, company="Roku", title="Director, Corp Dev",
+                           dir="https://folder", drive_url="https://folder",
+                           resume_url="https://r", cover_url="https://c", model="m")
+        jid2 = _job(self.conn, sid="2")  # same company+title re-fetched under a new id
+        with mock.patch.object(drafting.llm, "complete_text",
+                               side_effect=AssertionError("must NOT redraft")):
+            code, res = server.draft_action(self.conn, jid2)
+        self.assertEqual(code, 200)
+        self.assertTrue(res.get("existing"))
+        self.assertEqual(store.get_draft(self.conn, jid2)["drive_url"], "https://folder")
+
+
 class TestNonMatchView(unittest.TestCase):
     def test_other_section_and_draft_button(self):
         conn = db.connect(":memory:")

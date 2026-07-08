@@ -26,30 +26,65 @@ from .sources import ats as ats_mod
 from .sources import resolver as resolver_mod
 
 DISCOVERY_SYSTEM = (
-    "You help a Bay Area job seeker find NEW target companies. Use web search to find REAL "
-    "companies (media, entertainment, gaming, consumer tech) headquartered in or hiring in the "
-    "SF Bay Area whose roles would fit the candidate's background. For each, provide a real "
-    "source URL (the company's careers page or a reputable listing) that you actually found. "
-    "NEVER invent a company, domain, or URL. Return ONLY a JSON array."
+    "You help a job seeker find NEW target companies. Use web search to find REAL companies "
+    "across media, entertainment, streaming, gaming, music, sports & live events, the creator "
+    "economy (creator tools/platforms), digital publishing & news, consumer subscription apps, "
+    "consumer social, marketplaces, and media/ad-tech — that are either headquartered in the SF "
+    "Bay Area OR hire for Bay-Area/US-remote roles. The candidate's fit is in business roles "
+    "(Corporate Development, M&A, Strategy, Operations, Business Development, Partnerships), so "
+    "only propose companies large/funded enough to plausibly staff those functions. "
+    "IMPORTANT: favor LESS-OBVIOUS, emerging, and mid-size companies (growth-stage startups, "
+    "Series B-D, notable private companies) over household names — the obvious big players are "
+    "already on the list. For each, provide a real source URL (the company's careers page or a "
+    "reputable listing) that you actually found. NEVER invent a company, domain, or URL. "
+    "Return ONLY a JSON array."
 )
 
 _NORM = re.compile(r"[^a-z0-9]+")
+
+# Rotating sector lenses: each scan hunts a different corner of the market, so
+# repeat runs keep producing fresh names instead of converging on the same
+# handful of obvious ones (which are all excluded already).
+SECTOR_FOCI = [
+    "streaming video & premium content",
+    "gaming studios & game platforms / infrastructure",
+    "music, audio & podcasting",
+    "sports media, fantasy sports & live events",
+    "creator-economy tools & talent platforms",
+    "digital publishing, news & newsletters",
+    "consumer subscription & social apps",
+    "marketplaces & live / social commerce",
+    "media & ad-tech, streaming infrastructure",
+    "kids, education & family entertainment",
+    "fitness, wellness & lifestyle media",
+    "AI-native media & content tools",
+]
 
 
 def _norm(name: str) -> str:
     return _NORM.sub(" ", (name or "").lower()).strip()
 
 
-def _discovery_prompt(profile: Dict[str, Any], exclude: List[str], k: int) -> str:
+def _discovery_prompt(profile: Dict[str, Any], exclude: List[str], k: int,
+                      focus: Optional[List[str]] = None) -> str:
     threads = ", ".join(profile.get("experience_threads") or profile.get("domains") or []) or "strategy, operations, business development"
+    focus_line = (f"- THIS scan, hunt especially in: {'; '.join(focus)}. Other strong fits are still welcome.\n"
+                  if focus else "")
     return f"""Find up to {k} NEW companies for this candidate to target.
 
 Candidate threads: {threads}
 Seniority: {profile.get('seniority')}  |  Summary: {profile.get('summary')}
 
 Constraints:
-- SF Bay Area (or strong Bay/US-remote presence), in media / entertainment / gaming / consumer tech.
-- Roles should fit the candidate's FULL background above.
+{focus_line.rstrip()}
+- SF Bay Area HQ, or a strong Bay-Area / US-remote hiring presence.
+- Sector: media, entertainment, streaming, gaming, music, sports & live events, creator
+  economy / creator tools, digital publishing & news, consumer subscription, consumer social,
+  marketplaces, or media/ad-tech.
+- Must plausibly staff business roles the candidate targets: Corporate Development, M&A,
+  Strategy, Operations, Business Development, Partnerships. Skip pure-hardware/biotech/fintech.
+- Favor LESS-OBVIOUS / emerging / mid-size companies (growth-stage, Series B-D, notable private
+  companies). Do NOT return household names or anything on the exclude list.
 - Do NOT include any of these (already tracked or already seen): {', '.join(sorted(exclude)) or '(none)'}
 
 Use web search to confirm each company is real and find its careers page.
@@ -84,7 +119,7 @@ def should_run(conn: sqlite3.Connection, *, force: bool = False) -> bool:
 
 def discover(
     conn: sqlite3.Connection, profile: Dict[str, Any], *,
-    model: str = config.DEEP_MODEL, k: int = 12, session=None,
+    model: str = config.DEEP_MODEL, k: int = 20, session=None,
 ) -> Dict[str, List[dict]]:
     """Run one discovery scan. Returns {'proposed': [...], 'unverified': [...]}.
     Persists proposals/unverified to the suggestions table; stamps last_discovery_at."""
@@ -98,49 +133,59 @@ def discover(
     exclude_norms = watch | store.existing_suggestion_names(conn)
     exclude_display = [c.name for c in (load_companies() if watch else [])]
 
-    text, cited = llm.web_search(_discovery_prompt(profile, exclude_display, k),
-                                 system=DISCOVERY_SYSTEM, model=model, max_tokens=4096)
-    try:
-        candidates = llm.parse_json(text)
-    except llm.LLMError:
-        candidates = []
-    if not isinstance(candidates, list):
-        candidates = []
-
     out: Dict[str, List[dict]] = {"proposed": [], "unverified": []}
-    for c in candidates:
-        if not isinstance(c, dict):
-            continue
-        name = (c.get("company") or "").strip()
-        norm = _norm(name)
-        if not name or norm in exclude_norms:
-            continue
-        exclude_norms.add(norm)
-        reason = (c.get("reason") or "").strip()
-        evidence = (c.get("evidence_url") or "").strip()
 
-        # 1) try to resolve a real public ATS feed (strongest verification)
-        res = resolver_mod.resolve_company(Company(name=name, ats="auto"), session)
-        if res.ok and res.slug:
-            feed = ats_mod.board_url(res.ats, res.slug) or evidence
-            if store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
-                                    evidence_url=feed, ats=res.ats, slug=res.slug, status="proposed"):
-                out["proposed"].append({"company": name, "reason": reason, "evidence_url": feed,
-                                        "ats": res.ats, "slug": res.slug, "via": f"feed ({res.n_jobs} roles)"})
-            continue
+    def _scan(focus: Optional[List[str]], exclude_names: List[str]) -> None:
+        text, _cited = llm.web_search(_discovery_prompt(profile, exclude_names, k, focus),
+                                      system=DISCOVERY_SYSTEM, model=model, max_tokens=4096)
+        try:
+            candidates = llm.parse_json(text)
+        except llm.LLMError:
+            candidates = []
+        for c in (candidates if isinstance(candidates, list) else []):
+            if not isinstance(c, dict):
+                continue
+            name = (c.get("company") or "").strip()
+            norm = _norm(name)
+            if not name or norm in exclude_norms:
+                continue
+            exclude_norms.add(norm)
+            reason = (c.get("reason") or "").strip()
+            evidence = (c.get("evidence_url") or "").strip()
 
-        # 2) else accept only if the cited careers URL is actually reachable
-        if _http_ok(evidence, session):
-            if store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
-                                    evidence_url=evidence, ats=None, slug=None, status="proposed"):
-                out["proposed"].append({"company": name, "reason": reason, "evidence_url": evidence,
-                                        "ats": None, "slug": None, "via": "careers page"})
-            continue
+            # 1) try to resolve a real public ATS feed (strongest verification)
+            res = resolver_mod.resolve_company(Company(name=name, ats="auto"), session)
+            if res.ok and res.slug:
+                feed = ats_mod.board_url(res.ats, res.slug) or evidence
+                if store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
+                                        evidence_url=feed, ats=res.ats, slug=res.slug, status="proposed"):
+                    out["proposed"].append({"company": name, "reason": reason, "evidence_url": feed,
+                                            "ats": res.ats, "slug": res.slug, "via": f"feed ({res.n_jobs} roles)"})
+                continue
 
-        # 3) unverifiable -> bucket, never propose
-        store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
-                             evidence_url=evidence or None, ats=None, slug=None, status="unverified")
-        out["unverified"].append({"company": name, "reason": reason, "evidence_url": evidence})
+            # 2) else accept only if the cited careers URL is actually reachable
+            if _http_ok(evidence, session):
+                if store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
+                                        evidence_url=evidence, ats=None, slug=None, status="proposed"):
+                    out["proposed"].append({"company": name, "reason": reason, "evidence_url": evidence,
+                                            "ats": None, "slug": None, "via": "careers page"})
+                continue
+
+            # 3) unverifiable -> bucket, never propose
+            store.add_suggestion(conn, company=name, norm_name=norm, reason=reason,
+                                 evidence_url=evidence or None, ats=None, slug=None, status="unverified")
+            out["unverified"].append({"company": name, "reason": reason, "evidence_url": evidence})
+
+    # Scan with a rotating 3-sector focus; if the haul is thin (<3 new proposals),
+    # retry once on the next lens — a run should never quietly come back empty.
+    rot = int(db.get_meta(conn, "discovery_rotation", "0") or 0)
+    for _attempt in range(2):
+        focus = [SECTOR_FOCI[(rot + i) % len(SECTOR_FOCI)] for i in range(3)]
+        rot += 3
+        _scan(focus, exclude_display + [p["company"] for p in out["proposed"]])
+        if len(out["proposed"]) >= 3:
+            break
+    db.set_meta(conn, "discovery_rotation", str(rot))
 
     db.set_meta(conn, "last_discovery_at", datetime.now(timezone.utc).isoformat(timespec="seconds"))
     return out

@@ -33,9 +33,10 @@ companies:
   - name: Epic Games
     ats: greenhouse
     slug: epicgames
-  # Apple — no public ATS; custom `apple` source scrapes jobs.apple.com search results,
-  # scoped to Media & Entertainment divisions (TV+, Music, Podcasts, News, Books, Arcade,
-  # Sports, Beats). Drops retail/eng at source; deep scoring keeps core-function fits.
+  # Apple — no public ATS; custom `apple` source scrapes jobs.apple.com search results.
+  # HEADS-UP (2026-07-06): Apple moved search fully client-side (SSR ignores query params;
+  # the internal /api/v1/search rejects non-browser calls), so this source currently
+  # returns 0. Kept so `job-agent doctor` keeps checking whether scraping works again.
   - name: "Apple (Media & Entertainment)"
     ats: apple
     queries:
@@ -116,12 +117,46 @@ companies:
       - "media partnerships"
       - "media strategy and operations"
       - "content partnerships"
-  - name: "Unity Technologies"
-    ats: greenhouse
-    slug: unity3d              # NB: the board slug is "unity3d", not "unity" (which 404s)
+  # Unity — left Greenhouse (unity3d AND unity both 404 now, verified 2026-07-06); their
+  # careers site is a JS app with no public feed the resolver can reach. Commented out so
+  # it doesn't error every run; re-add if a public feed surfaces.
+  # - name: "Unity Technologies"
+  #   ats: greenhouse
+  #   slug: unity3d
   # Electronic Arts (EA) — no public ATS feed (greenhouse/lever/ashby/workday/SmartRecruiters
   # all 404/empty); ea.com/careers is a custom site. Would need a dedicated scraper like
   # Apple/Google. Commented out so it doesn't error every run; re-add if a feed is built.
   # - name: "Electronic Arts (EA)"
   #   ats: greenhouse
   #   slug: EA
+  - name: "Digital Eclipse"
+    ats: greenhouse
+    slug: digitaleclipse
+  # Ubisoft hires through SmartRecruiters company-wide ("Ubisoft2", verified 214 roles);
+  # the location filter keeps SF Bay Area / US-remote ones.
+  - name: "Ubisoft San Francisco"
+    ats: smartrecruiters
+    slug: Ubisoft2
+  # Snap — custom `snap` source (careers.snap.com JSON API; Workday-backed).
+  - name: "Snap Inc."
+    ats: snap
+  - name: "Whatnot"
+    ats: auto
+  - name: "Fandom (formerly Wikia)"
+    ats: greenhouse
+    slug: fandom
+  - name: "Linktree"
+    ats: auto
+  - name: "Overtime"
+    ats: auto
+  - name: "Podcastle"
+    ats: auto
+  - name: "Strava"
+    ats: ashby
+    slug: strava
+  - name: "Backbone"
+    ats: ashby
+    slug: backbone
+  - name: "Beacons"
+    ats: ashby
+    slug: beacons

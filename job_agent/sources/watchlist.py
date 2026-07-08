@@ -58,7 +58,15 @@ def audit_watchlist(companies, session=None, retries: int = 1) -> List[dict]:
     for co in companies:
         ats, slug, ok, count, detail, fix = co.ats, co.slug, False, 0, "", None
         try:
-            if co.ats in ("google", "apple", "netflix"):  # custom sources — 1 query = quick check
+            if co.ats == "auto":  # board not pinned yet — try to resolve it right now
+                r = resolver.resolve_company(Company(co.name, "auto"), session)
+                if r.ok and r.slug:
+                    ok, count = True, r.n_jobs or 0
+                    fix = f"{r.ats}:{r.slug}"
+                    detail = f"auto-resolves to {r.ats}:{r.slug}"
+                else:
+                    detail = "no public job board found yet (auto — re-tried every run)"
+            elif co.ats in ("google", "apple", "netflix", "snap"):  # custom sources — 1 query = quick check
                 ex = dict(co.extra); ex["queries"] = (co.extra.get("queries") or [])[:1]
                 count = len(ats_sources.SOURCE_BY_ATS[co.ats](co.slug, co.name, session=session, timeout=25, **ex).fetch())
                 ok, detail = count > 0, "custom source"

@@ -101,3 +101,24 @@ CREATE TABLE IF NOT EXISTS suggestions (
     first_seen   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
+
+-- Application tracking: a row appears when the user marks a role as applied
+-- (via the local app's "Applied" button). One row per job; status advances.
+CREATE TABLE IF NOT EXISTS applications (
+    job_id     INTEGER PRIMARY KEY REFERENCES jobs (id) ON DELETE CASCADE,
+    status     TEXT NOT NULL DEFAULT 'applied', -- applied | interviewing | offer | rejected | withdrawn
+    applied_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Free-form updates, notes, and to-dos the user leaves on an application.
+-- kind='todo' rows carry done 0/1; kind='note' rows leave done NULL.
+CREATE TABLE IF NOT EXISTS app_notes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id     INTEGER NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL DEFAULT 'note',    -- 'note' | 'todo'
+    text       TEXT NOT NULL,
+    done       INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_notes_job ON app_notes (job_id);

@@ -87,15 +87,45 @@ def _run_watchlist(conn):
         _, is_new = store.upsert_job(conn, job)
         new += int(is_new)
 
+    for up in _upgrade_auto_entries(report):
+        print(f"    ⚙ pinned job board in companies.yaml: {up}")
     for r in report.fetched_ok:
         print(f"    + {r.company} [{r.resolution.ats}]: {r.fetched} fetched, {r.kept} in-scope")
     for r in report.errored:
         print(f"    ! {r.company}: {r.error}")
     if report.unresolved:
-        print("  UNRESOLVED — add `ats` + `slug` in companies.yaml for:")
+        print("  No public job feed found yet for (kept on the list; re-tried every run):")
         for r in report.unresolved:
             print(f"      - {r.company}")
     return len(jobs), new
+
+
+def _upgrade_auto_entries(report) -> list:
+    """Self-healing watchlist: when an `ats: auto` entry's board resolves during a
+    run, pin the resolved ats+slug into companies.yaml (comments preserved) so the
+    user never touches a slug. Returns human-readable upgrade descriptions."""
+    import re
+
+    try:
+        text = config.COMPANIES_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    upgraded = []
+    for r in report.results:
+        res = r.resolution
+        if not (res.ok and res.ats and res.slug):
+            continue
+        pat = re.compile(
+            r'(-\s+name:\s+"?' + re.escape(r.company) + r'"?\s*\n(\s+))ats:\s*auto\s*\n')
+        m = pat.search(text)
+        if m:
+            indent = m.group(2)
+            text = (text[:m.start()] + f"{m.group(1)}ats: {res.ats}\n{indent}slug: {res.slug}\n"
+                    + text[m.end():])
+            upgraded.append(f"{r.company} → {res.ats}:{res.slug}")
+    if upgraded:
+        config.COMPANIES_PATH.write_text(text, encoding="utf-8")
+    return upgraded
 
 
 def cmd_fetch(args: argparse.Namespace) -> int:
@@ -177,9 +207,26 @@ def _publish(conn, *, dry_run: bool, email: bool = True):
     return stats
 
 
+def _backup_data() -> None:
+    """Pre-run snapshot of the DB + watchlist (keeps the last 10 of each), so no
+    schema change or bad run can ever lose decisions, drafts, or notes."""
+    import shutil
+    from datetime import datetime, timezone
+
+    bdir = config.DATA_DIR / "backups"
+    bdir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    for src in (config.DB_PATH, config.COMPANIES_PATH):
+        if src.exists():
+            shutil.copy2(src, bdir / f"{stamp}-{src.name}")
+            for old in sorted(bdir.glob(f"*-{src.name}"))[:-10]:
+                old.unlink()
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Full pipeline: fetch -> score -> publish (website + optional email)."""
     config.ensure_dirs()
+    _backup_data()
     conn = db.connect()
     db.init_db(conn)
 
@@ -290,6 +337,24 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"\n{len(broken)} need attention. '→' = a wrong slug I can fix; the rest have no public feed.")
     else:
         print(f"\nAll {len(companies)} feeds healthy ✓")
+
+    # Beyond feeds: the rest of the system at a glance.
+    from . import oauth
+    conn = db.connect()
+    db.init_db(conn)
+    drive_ok = oauth.is_authorized()
+    last_disc = db.get_meta(conn, "last_discovery_at")
+    n_props = len(store.list_suggestions(conn, "proposed"))
+    n_apps = conn.execute("SELECT COUNT(*) AS n FROM applications").fetchone()["n"]
+    backups = sorted((config.DATA_DIR / "backups").glob("*-jobs.db"))
+    print("\nSystem:")
+    print(f"  {'✓' if drive_ok else '✗'}  Google Drive sign-in"
+          f"{'' if drive_ok else ' — run `job-agent auth` so drafts reach Drive'}")
+    print(f"  {'✓' if last_disc else '✗'}  last discovery scan: {last_disc or 'never'}"
+          f"  ({n_props} proposal{'s' if n_props != 1 else ''} open)")
+    print(f"  {'✓' if backups else '—'}  DB backups: {len(backups)} in data/backups/")
+    print(f"  ·  applications tracked: {n_apps}")
+    conn.close()
     return 1 if broken else 0
 
 

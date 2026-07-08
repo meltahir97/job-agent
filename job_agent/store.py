@@ -202,8 +202,85 @@ def get_draft(conn: sqlite3.Connection, job_id: int):
     return conn.execute("SELECT * FROM drafts WHERE job_id = ?", (job_id,)).fetchone()
 
 
+def get_draft_for_role(conn: sqlite3.Connection, company: str, title: str):
+    """A draft for the same company+title under ANY job id — catches a role that was
+    re-fetched under a new id, so the same posting is never drafted twice."""
+    return conn.execute(
+        "SELECT * FROM drafts WHERE company = ? AND title = ? ORDER BY created_at DESC LIMIT 1",
+        (company, title),
+    ).fetchone()
+
+
 def drafted_job_ids(conn: sqlite3.Connection) -> set:
     return {r["job_id"] for r in conn.execute("SELECT job_id FROM drafts")}
+
+
+# --- application tracking (applied roles + notes / to-dos) -------------------
+
+APP_STATUSES = ("applied", "interviewing", "offer", "rejected", "withdrawn")
+
+
+def set_application(conn: sqlite3.Connection, job_id: int, status: str = "applied") -> None:
+    """Mark a job as applied (or advance its status). Keeps the original applied_at."""
+    now = now_iso()
+    conn.execute(
+        "INSERT INTO applications (job_id, status, applied_at, updated_at) VALUES (?,?,?,?) "
+        "ON CONFLICT(job_id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at",
+        (job_id, status, now, now),
+    )
+    conn.commit()
+
+
+def get_application(conn: sqlite3.Connection, job_id: int):
+    return conn.execute("SELECT * FROM applications WHERE job_id = ?", (job_id,)).fetchone()
+
+
+def clear_application(conn: sqlite3.Connection, job_id: int) -> None:
+    """Untrack an application (misclick undo). Its notes are kept."""
+    conn.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
+    conn.commit()
+
+
+def applied_job_ids(conn: sqlite3.Connection) -> set:
+    return {r["job_id"] for r in conn.execute("SELECT job_id FROM applications")}
+
+
+def list_applications(conn: sqlite3.Connection):
+    """Applications newest-activity-first, joined with the job + draft links."""
+    return conn.execute(
+        """SELECT a.job_id AS id, a.status, a.applied_at, a.updated_at,
+                  j.title, j.company, j.location, j.url,
+                  (SELECT drive_url FROM drafts d WHERE d.job_id = a.job_id) AS draft_url,
+                  (SELECT COUNT(*) FROM app_notes n
+                    WHERE n.job_id = a.job_id AND n.kind='todo' AND COALESCE(n.done,0)=0) AS open_todos
+           FROM applications a JOIN jobs j ON j.id = a.job_id
+           ORDER BY a.updated_at DESC""",
+    ).fetchall()
+
+
+def add_app_note(conn: sqlite3.Connection, job_id: int, text: str, kind: str = "note") -> int:
+    cur = conn.execute(
+        "INSERT INTO app_notes (job_id, kind, text, done, created_at) VALUES (?,?,?,?,?)",
+        (job_id, kind, text, 0 if kind == "todo" else None, now_iso()),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def list_app_notes(conn: sqlite3.Connection, job_id: int):
+    return conn.execute(
+        "SELECT * FROM app_notes WHERE job_id = ? ORDER BY created_at, id", (job_id,)
+    ).fetchall()
+
+
+def set_note_done(conn: sqlite3.Connection, note_id: int, done: bool) -> None:
+    conn.execute("UPDATE app_notes SET done = ? WHERE id = ?", (1 if done else 0, note_id))
+    conn.commit()
+
+
+def delete_app_note(conn: sqlite3.Connection, note_id: int) -> None:
+    conn.execute("DELETE FROM app_notes WHERE id = ?", (note_id,))
+    conn.commit()
 
 
 # --- company-discovery suggestions (propose-only) ---------------------------

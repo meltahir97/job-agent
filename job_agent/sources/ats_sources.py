@@ -489,6 +489,48 @@ class AppleSource(JobSource):
         )
 
 
+class SnapSource(JobSource):
+    """Snap careers (careers.snap.com) — their own JSON API over the Workday backend.
+    Returns an Elasticsearch projection per job (title / departments / offices / URL;
+    no JD text, so triage scores on the title). The API ignores text-search params,
+    so fetch the whole list (~150-200 roles) and let the location filter + scoring
+    narrow it. Missing fields stay None — never fabricated."""
+    name = ats = "snap"
+    URL = "https://careers.snap.com/api/jobs"
+
+    def __init__(self, slug=None, company="Snap Inc.", session=None, timeout: int = 25, **extra):
+        self.company = company
+        self.timeout = timeout
+        self.session = session or requests.Session()
+
+    def fetch(self, query: Optional[JobQuery] = None) -> List[Job]:
+        headers = {"User-Agent": _BROWSER_UA, "Accept": "application/json"}
+        resp = self.session.get(self.URL, params={"limit": 500}, headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+        out: List[Job] = []
+        for hit in (resp.json().get("body") or []):
+            src = hit.get("_source") or {}
+            title = (src.get("title") or "").strip()
+            url = src.get("absolute_url")
+            jid = str(src.get("id") or hit.get("_id") or "")
+            if not (title and url and jid):
+                continue
+            offices = src.get("offices") or []
+            locs = sorted({(o.get("location") or o.get("city") or "").strip()
+                           for o in offices if isinstance(o, dict)} - {""})
+            location = ", ".join(locs) or (src.get("primary_location") or None)
+            dept = src.get("departments")
+            out.append(Job(
+                source=self.ats, source_job_id=jid, title=title, company=self.company,
+                location=location, remote=_remote_from_text(f"{title} {location or ''}"),
+                description=None, url=url,
+                category=dept if isinstance(dept, str) else None,
+                raw={"departments": dept, "offices": offices,
+                     "employment_type": src.get("employment_type")},
+            ))
+        return out
+
+
 SOURCE_BY_ATS = {
     "greenhouse": GreenhouseSource,
     "lever": LeverSource,
@@ -499,4 +541,5 @@ SOURCE_BY_ATS = {
     "google": GoogleSource,
     "netflix": NetflixSource,
     "apple": AppleSource,
+    "snap": SnapSource,
 }

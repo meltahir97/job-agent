@@ -33,9 +33,44 @@ def job_action(conn, job_id: int, action: str) -> Tuple[int, dict]:
         store.record_feedback(conn, job_id, "saved")
     elif action == "undo":
         store.clear_feedback(conn, job_id)
+    elif action == "applied":
+        store.set_application(conn, job_id, "applied")
+        store.record_feedback(conn, job_id, "saved", note="applied")  # strongest positive signal
+    elif action == "unapply":
+        store.clear_application(conn, job_id)
     else:
         return 400, {"ok": False, "error": f"unknown action {action!r}"}
     return 200, {"ok": True, "id": job_id, "action": action}
+
+
+def application_update(conn, job_id: int, status: str) -> Tuple[int, dict]:
+    if not store.get_application(conn, job_id):
+        return 404, {"ok": False, "error": f"job {job_id} is not tracked as applied"}
+    if status not in store.APP_STATUSES:
+        return 400, {"ok": False, "error": f"unknown status {status!r}"}
+    store.set_application(conn, job_id, status)
+    return 200, {"ok": True, "id": job_id, "status": status}
+
+
+def note_add(conn, job_id: int, body: dict) -> Tuple[int, dict]:
+    if not store.get_job(conn, job_id):
+        return 404, {"ok": False, "error": f"no job with id {job_id}"}
+    text = (body.get("text") or "").strip()[:500]
+    if not text:
+        return 400, {"ok": False, "error": "empty note"}
+    kind = body.get("kind") if body.get("kind") in ("note", "todo") else "note"
+    nid = store.add_app_note(conn, job_id, text, kind)
+    return 200, {"ok": True, "id": nid, "kind": kind}
+
+
+def note_action(conn, note_id: int, action: str, body: dict) -> Tuple[int, dict]:
+    if action == "toggle":
+        store.set_note_done(conn, note_id, bool(body.get("done")))
+    elif action == "delete":
+        store.delete_app_note(conn, note_id)
+    else:
+        return 400, {"ok": False, "error": f"unknown action {action!r}"}
+    return 200, {"ok": True, "id": note_id, "action": action}
 
 
 def suggestion_action(conn, sid: int, action: str, ats=None, slug=None) -> Tuple[int, dict]:
@@ -52,22 +87,41 @@ def suggestion_action(conn, sid: int, action: str, ats=None, slug=None) -> Tuple
 
 def draft_action(conn, job_id: int) -> Tuple[int, dict]:
     """Generate (or return existing) Drive drafts for ANY job — including roles not
-    flagged as a match. Synchronous (one LLM call); fine under ThreadingHTTPServer."""
+    flagged as a match. Synchronous (one LLM call); fine under ThreadingHTTPServer.
+
+    Never drafts the same role twice: an existing pair (by job id OR by company+title,
+    catching re-fetched postings) is returned as-is; a local-only pair left over from a
+    signed-out / storage-full moment is UPLOADED unchanged, not regenerated."""
     from . import drafting
 
     job = store.get_job(conn, job_id)
     if not job:
         return 404, {"ok": False, "error": f"no job with id {job_id}"}
-    existing = store.get_draft(conn, job_id)
+    existing = (store.get_draft(conn, job_id)
+                or store.get_draft_for_role(conn, job["company"] or "", job["title"] or ""))
     if existing and existing["drive_url"]:
+        if existing["job_id"] != job_id:  # same role under a new id — link, don't redraft
+            store.record_draft(conn, job_id, company=existing["company"], title=existing["title"],
+                               dir=existing["dir"], drive_url=existing["drive_url"],
+                               resume_url=existing["resume_url"], cover_url=existing["cover_url"],
+                               model=existing["model"])
         return 200, {"ok": True, "folder": existing["drive_url"], "resume_url": existing["resume_url"],
                      "cover_url": existing["cover_url"], "existing": True}
+    if existing:  # local-only pair: move the SAME files to Drive, no regeneration
+        try:
+            res = drafting.migrate_local_draft(conn, job, existing)
+        except Exception as e:  # noqa: BLE001
+            return 500, {"ok": False, "error": f"Couldn't upload the existing local draft to Drive: {e}"}
+        if res:
+            return 200, {"ok": True, "folder": res.get("folder"), "resume_url": res.get("resume_url"),
+                         "cover_url": res.get("cover_url"), "where": res.get("where"), "migrated": True}
     try:
         master, voice = drafting.load_profiles()
     except FileNotFoundError as e:
         return 422, {"ok": False, "error": str(e)}
     try:
-        res = drafting.generate_for_role(conn, job, master, voice, regenerate=True)
+        # regenerate only needed when a stale record exists whose local files vanished
+        res = drafting.generate_for_role(conn, job, master, voice, regenerate=bool(existing))
     except drafting.llm.LLMError as e:
         return 500, {"ok": False, "error": str(e)}
     return 200, {"ok": True, "folder": res.get("folder"), "resume_url": res.get("resume_url"),
@@ -76,8 +130,13 @@ def draft_action(conn, job_id: int) -> Tuple[int, dict]:
 
 def render_page(conn, include_all: bool = False) -> str:
     rows = website.select_all_scored(conn) if include_all else website.select_master(conn)
+    applied = store.applied_job_ids(conn)
+    rows = [r for r in rows if r["id"] not in applied]  # applied roles live in their own section
     suggestions = store.list_suggestions(conn, "proposed")
-    page, _ = website.render_html(rows, suggestions=suggestions, interactive=True, include_all=include_all)
+    applications = store.list_applications(conn)
+    notes = {a["id"]: store.list_app_notes(conn, a["id"]) for a in applications}
+    page, _ = website.render_html(rows, suggestions=suggestions, interactive=True, include_all=include_all,
+                                  applications=applications, app_notes=notes)
     return page
 
 
@@ -122,8 +181,14 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if len(parts) == 4 and parts[0] == "api" and parts[1] == "job" and parts[3] == "draft":
                 code, res = draft_action(conn, int(parts[2]))
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "job" and parts[3] == "status":
+                code, res = application_update(conn, int(parts[2]), (body.get("status") or "").strip())
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "job" and parts[3] == "note":
+                code, res = note_add(conn, int(parts[2]), body)
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "job":
                 code, res = job_action(conn, int(parts[2]), parts[3])
+            elif len(parts) == 4 and parts[0] == "api" and parts[1] == "note":
+                code, res = note_action(conn, int(parts[2]), parts[3], body)
             elif len(parts) == 4 and parts[0] == "api" and parts[1] == "suggestion":
                 code, res = suggestion_action(conn, int(parts[2]), parts[3], body.get("ats"), body.get("slug"))
             else:

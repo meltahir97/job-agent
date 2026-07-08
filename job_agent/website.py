@@ -134,6 +134,23 @@ details.role.removing,.sug.removing{opacity:0;transform:translateY(-6px);transit
 .slugform{display:flex;gap:6px;align-items:center;flex-wrap:wrap;width:100%;margin-top:6px}
 .slugform input,.slugform select{padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12px}
 .sugmsg{font-size:12px;color:var(--new)}
+.appcard{background:var(--card);border:1px solid var(--line);border-left:3px solid var(--strong);border-radius:8px;padding:10px 12px;margin:6px 0}
+.apphead{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.appst{padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;background:#fff}
+.appmeta{color:var(--muted);font-size:12.5px;margin-top:4px}
+.appmeta a{color:var(--accent);text-decoration:none}.appmeta a:hover{text-decoration:underline}
+.appmeta .btn{padding:2px 7px;font-size:10.5px}
+details.notes{margin-top:6px}details.notes>summary{cursor:pointer;font-size:12.5px;color:var(--muted);list-style:none}
+details.notes>summary::-webkit-details-marker{display:none}
+details.notes>summary:before{content:'▸ '}details.notes[open]>summary:before{content:'▾ '}
+.notelist{list-style:none;margin:6px 0 0;padding:0}
+.notelist li{display:flex;gap:8px;align-items:baseline;padding:4px 0;border-bottom:1px dashed var(--line);font-size:13.5px}
+.notelist li>span:first-child,.notelist li>label{flex:1}
+.notelist li.todo.done>label{text-decoration:line-through;color:var(--muted)}
+.notelist .when{color:var(--muted);font-size:11.5px;flex:none}
+.notedel{padding:1px 6px;font-size:11px;color:var(--muted)}
+.noteform{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.noteform input{flex:1;min-width:180px;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px}
 @media(max-width:520px){.t{flex-basis:100%}}
 """
 
@@ -180,8 +197,24 @@ _ACTIONS_JS = """
         if(!res.ok){b.disabled=false; b.textContent='retry'; return;}
         if(act==='reject'){ card.classList.add('removing'); setTimeout(function(){card.remove(); if(window.applyFilters)window.applyFilters();},220); }
         else if(act==='save'){ card.classList.add('is-saved'); b.outerHTML='<span class="savedtag">Saved \\u2713</span> <button class="btn" data-kind="job" data-id="'+id+'" data-act="undo" title="Undo save">undo</button>'; }
-        else if(act==='undo'){ location.reload(); }
+        else if(act==='undo'||act==='applied'||act==='unapply'){ location.reload(); }
       });
+    } else if(b.dataset.kind==='appnote'){
+      var card=b.closest('.appcard'), jid=b.dataset.id, inp=card.querySelector('.notetxt'), txt=(inp.value||'').trim();
+      if(!txt){ inp.focus(); return; }
+      b.disabled=true;
+      post('/api/job/'+jid+'/note',{text:txt,kind:b.dataset.noteKind}).then(function(res){
+        b.disabled=false; if(!res.ok){ alert(res.error||'failed'); return; }
+        inp.value='';
+        var ul=card.querySelector('.notelist'), li=document.createElement('li');
+        var del=' <button class="btn notedel" data-kind="notedel" data-id="'+res.id+'" title="Delete">\\u00d7</button>';
+        if(res.kind==='todo'){ li.className='todo'; li.innerHTML='<label><input type="checkbox" class="tddone" data-id="'+res.id+'"> </label><span class="when">now</span>'+del; li.querySelector('label').append(' '+txt); }
+        else { li.innerHTML='<span></span><span class="when">now</span>'+del; li.querySelector('span').textContent=txt; }
+        ul.appendChild(li);
+        var sum=card.querySelector('details.notes>summary'); if(sum) sum.textContent='Notes & to-dos ('+ul.children.length+')';
+      });
+    } else if(b.dataset.kind==='notedel'){
+      post('/api/note/'+b.dataset.id+'/delete').then(function(res){ if(res.ok){ var li=b.closest('li'); if(li) li.remove(); } });
     } else if(b.dataset.kind==='draft'){
       var jid=b.dataset.id; b.disabled=true; b.textContent='Drafting…';
       post('/api/job/'+jid+'/draft').then(function(res){
@@ -198,6 +231,15 @@ _ACTIONS_JS = """
         if(!res.ok){ b.disabled=false; if(msg)msg.textContent=(res.message||res.error||'error'); return; }
         wrap.classList.add('removing'); setTimeout(function(){wrap.remove();},220);
       });
+    }
+  });
+  document.addEventListener('change',function(e){
+    var t=e.target;
+    if(t.classList&&t.classList.contains('appst')){
+      post('/api/job/'+t.dataset.id+'/status',{status:t.value});
+    } else if(t.classList&&t.classList.contains('tddone')){
+      post('/api/note/'+t.dataset.id+'/toggle',{done:t.checked});
+      var li=t.closest('li'); if(li)li.classList.toggle('done',t.checked);
     }
   });
   var fa=document.getElementById('f-all');
@@ -254,6 +296,8 @@ def _card(row: sqlite3.Row, interactive: bool = False) -> str:
             '<span class="acts">' + draft_el
             + f'<button class="btn rej" data-kind="job" data-id="{row["id"]}" data-act="reject" title="Hide this role">Reject</button>'
             + f'<button class="btn sav" data-kind="job" data-id="{row["id"]}" data-act="save" title="Mark interesting">Save</button>'
+            + f'<button class="btn app" data-kind="job" data-id="{row["id"]}" data-act="applied" '
+              'title="I applied — start tracking this application">Applied</button>'
             + "</span>"
         )
     s.append("</summary>")
@@ -270,6 +314,60 @@ def _card(row: sqlite3.Row, interactive: bool = False) -> str:
                  f'Interested? <code>job-agent save {row["id"]}</code></p>')
     s.append("</div></details>")
     return "".join(s)
+
+
+_STATUS_LABELS = (("applied", "Applied"), ("interviewing", "Interviewing"), ("offer", "Offer"),
+                  ("rejected", "Rejected"), ("withdrawn", "Withdrawn"))
+
+
+def _applications_section(apps, notes_by_job) -> str:
+    """'Applications' — roles the user marked Applied, with a status pipeline and a
+    per-application notes / to-dos dialog. LOCAL APP ONLY (never on the public site)."""
+    if not apps:
+        return ""
+    cards = []
+    for a in apps:
+        opts = "".join(f'<option value="{v}"{" selected" if a["status"] == v else ""}>{lbl}</option>'
+                       for v, lbl in _STATUS_LABELS)
+        items = []
+        for n in notes_by_job.get(a["id"], []):
+            when = f'<span class="when">{_date(n["created_at"])}</span>'
+            delete = (f'<button class="btn notedel" data-kind="notedel" data-id="{n["id"]}" '
+                      'title="Delete">×</button>')
+            if n["kind"] == "todo":
+                chk = " checked" if n["done"] else ""
+                items.append(f'<li class="todo{" done" if n["done"] else ""}">'
+                             f'<label><input type="checkbox" class="tddone" data-id="{n["id"]}"{chk}> '
+                             f'{html.escape(n["text"])}</label>{when}{delete}</li>')
+            else:
+                items.append(f'<li><span>{html.escape(n["text"])}</span>{when}{delete}</li>')
+        todos = (f' · <b>{a["open_todos"]}</b> to-do{"s" if a["open_todos"] != 1 else ""} open'
+                 if a["open_todos"] else "")
+        links = []
+        if a["draft_url"]:
+            links.append(f'<a href="{html.escape(a["draft_url"])}" target="_blank" rel="noopener">Drafts ↗</a>')
+        if a["url"]:
+            links.append(f'<a href="{html.escape(a["url"])}" target="_blank" rel="noopener">Listing ↗</a>')
+        link_html = (" · " + " · ".join(links)) if links else ""
+        cards.append(
+            f'<div class="appcard" data-id="{a["id"]}">'
+            f'<div class="apphead"><b>{html.escape(a["title"] or "Untitled role")}</b>'
+            f'<span class="co">{html.escape(a["company"] or "")}</span><span class="sp"></span>'
+            f'<select class="appst" data-id="{a["id"]}" title="Application status">{opts}</select></div>'
+            f'<div class="appmeta">applied {_date(a["applied_at"])}{todos}{link_html} · '
+            f'<button class="btn" data-kind="job" data-id="{a["id"]}" data-act="unapply" '
+            'title="Remove from tracking (notes are kept)">untrack</button></div>'
+            f'<details class="notes"><summary>Notes &amp; to-dos ({len(notes_by_job.get(a["id"], []))})</summary>'
+            f'<ul class="notelist">{"".join(items)}</ul>'
+            '<div class="noteform"><input type="text" class="notetxt" maxlength="500" '
+            'placeholder="Add an update, note, or to-do…">'
+            f'<button class="btn" data-kind="appnote" data-note-kind="note" data-id="{a["id"]}">+ Note</button>'
+            f'<button class="btn" data-kind="appnote" data-note-kind="todo" data-id="{a["id"]}">+ To-do</button>'
+            "</div></details></div>"
+        )
+    return ('<section class="pipeline"><h2 class="tier">📌 Applications '
+            f'<span style="color:var(--muted);font-weight:400">({len(apps)})</span></h2>'
+            + "".join(cards) + "</section>")
 
 
 def _suggestions_section(suggestions, interactive: bool = False) -> str:
@@ -312,7 +410,8 @@ def _suggestions_section(suggestions, interactive: bool = False) -> str:
 
 
 def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = None,
-                suggestions=None, interactive: bool = False, include_all: bool = False) -> Tuple[str, dict]:
+                suggestions=None, interactive: bool = False, include_all: bool = False,
+                applications=None, app_notes=None) -> Tuple[str, dict]:
     generated_at = generated_at or datetime.now().astimezone()
     buckets = {t: [r for r in rows if tier_for(r["fit_score"], r["label"]) == t] for t in ORDER}
     other = [r for r in rows if tier_for(r["fit_score"], r["label"]) is None]
@@ -342,11 +441,15 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
             f"</h2>{cards}</section>"
         )
     body = "".join(sections) or '<p class="m">No in-scope roles yet — run the pipeline.</p>'
+    # applications (with personal notes) render ONLY in the local app, never on the public page
+    apps_html = _applications_section(applications or [], app_notes or {}) if interactive else ""
     consider = _suggestions_section(suggestions or [], interactive)
     co_opts = "".join(f'<option value="{_attr(c)}">{html.escape(c)}</option>' for c in companies)
     if interactive:
-        help_html = ('Click <b>Reject</b> to hide a role or <b>Save</b> to flag it (both teach future '
-                     'scoring), and <b>Approve</b>/<b>Dismiss</b> a company below — changes save instantly.')
+        help_html = ('Click <b>Reject</b> to hide a role, <b>Save</b> to flag it (both teach future '
+                     'scoring), or <b>Applied</b> once you\'ve applied — the role moves to the '
+                     'Applications tracker above, where you can set its status and leave notes / '
+                     'to-dos. <b>Approve</b>/<b>Dismiss</b> companies below — changes save instantly.')
         scripts = f"<script>{_JS}</script><script>{_ACTIONS_JS}</script>"
     else:
         help_html = ('This published page is read-only. Open the local app (<code>job-agent serve</code>) '
@@ -373,6 +476,7 @@ def render_html(rows: List[sqlite3.Row], *, generated_at: Optional[datetime] = N
 </div>
 <div id="count"></div>
 <p class="help">{help_html}</p>
+{apps_html}
 <main>{body}</main>
 {consider}
 <footer>Generated by job-agent — grounded on real scored listings. Tiers: Strong ≥ {config.TIER_STRONG_MIN}, Worth a look {config.TIER_LOOK_MIN}–{config.TIER_STRONG_MIN - 1}. Click a row to expand.</footer>

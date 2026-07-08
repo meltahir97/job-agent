@@ -40,7 +40,12 @@ DRAFT_SYSTEM = (
     "the cover letter in the candidate's own VOICE (provided). A fabricated credential is a "
     "critical failure. NEVER mention business school, an MBA, or any graduate-school "
     "application, admission, or plan to attend — the candidate has no graduate degree and "
-    "does not want this referenced. Return plain text using the exact ===SECTION=== markers "
+    "does not want this referenced. "
+    "STYLE: the cover letter must read like the candidate wrote it himself — plain, confident, "
+    "specific prose with varied sentence lengths; contractions are fine. It must NOT read like "
+    "AI output: never use em dashes or en dashes anywhere in the cover letter (use commas, "
+    "periods, or parentheses), never use stock applicant phrases, and never write three "
+    "parallel clauses in a row. Return plain text using the exact ===SECTION=== markers "
     "requested — NOT JSON, no code fences."
 )
 
@@ -74,6 +79,7 @@ Return plain text with these EXACT marker lines (no JSON, no Markdown #/**, no c
 ===RESUME===
 NAME: <full name>
 CONTACT: {_contact_line(master)}
+SUMMARY: <ONE line, <=24 words, positioning the candidate FOR THIS ROLE — true facts only>
 ## EXPERIENCE
 @ <Company> :: <start – end dates>
 > <Title> :: <optional title-specific dates>
@@ -86,27 +92,70 @@ CONTACT: {_contact_line(master)}
 @ <School> :: <year>
 > <Degree>
 ## SKILLS
-- <8–14 skills separated by '  ·  ' on ONE line>
+- <8–12 skills separated by '  ·  ' on ONE line — the ones THIS job cares about most>
 
 ===COVER_LETTER===
-<one-page cover letter in the candidate's voice, addressed to {job['company']}; plain paragraphs separated by blank lines>
+<cover letter, 220–300 words, 3–4 paragraphs, addressed to {job['company']}; plain paragraphs separated by blank lines; sign off "Sincerely," then the candidate's name>
 
 ===OMITTED===
 - <a JD requirement the candidate does NOT clearly meet> (or the single word: none)
 
 CRITICAL rules:
-- ONE PAGE. The resume MUST fit on a single page. Keep ~12–16 bullets TOTAL: 3–4 for the most
-  relevant/recent roles, 1–2 for older ones, and OMIT minor/old roles (brief internships,
-  volunteer/student roles) when needed to fit. Skills on ONE line.
-- Use the marker structure EXACTLY: NAME:, CONTACT:, '## SECTION', '@ Org :: Dates',
+- TAILOR, don't recycle. Study the JD first, then for each recent role pick the 3–4 TRUE
+  achievements that best match what THIS job optimizes for, and REWRITE each bullet to lead
+  with the outcome this JD cares about — never a near-copy of the profile's wording. Echo the
+  JD's own vocabulary where it is truthful. Two different jobs must produce visibly different
+  resumes: different bullet selection, different emphasis, different summary.
+- ONE PAGE. Keep 10–14 bullets TOTAL: 3–4 for the most relevant/recent roles, 1–2 for older
+  ones, and OMIT minor/old roles (brief internships, volunteer/student roles) when needed to
+  fit. Skills on ONE line.
+- Use the marker structure EXACTLY: NAME:, CONTACT:, SUMMARY:, '## SECTION', '@ Org :: Dates',
   '> Title :: Dates', '- bullet'. One item per line. Do NOT use '#' headings or '**' bold.
 - Keep the CONTACT line exactly as given.
+- COVER LETTER voice & style (all mandatory):
+  * Write in the candidate's own voice per the VOICE PROFILE; vary sentence lengths; be concrete.
+  * Name at least one SPECIFIC thing about {job['company']} or this role, drawn from the JD.
+  * NO em dashes (—) or en dashes (–) anywhere. Use commas, periods, or parentheses instead.
+  * NEVER use these stock phrases (or close variants): "I am excited", "I am writing to
+    express", "aligns perfectly", "leverage my", "passionate about", "proven track record",
+    "fast-paced environment", "hit the ground running", "uniquely positioned", "resonates",
+    "I believe my skills".
+  * No more than ONE rhetorical flourish; no lists of three parallel clauses.
 - Grounding: every employer, title, date, degree, metric, and skill MUST appear in the master
   profile, with real numbers exactly as written. Never invent. No business-school / MBA mention."""
 
 
 _SECTION_RE = re.compile(r"^===\s*(RESUME|COVER[_ ]?LETTER|OMITTED)\s*===\s*$", re.I | re.M)
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9]*\n|\n```\s*$")
+
+# --- cover-letter style gate (AI tells the user explicitly flagged) ----------
+
+_BANNED_PHRASES = (
+    "i am excited", "i'm excited", "i am writing to express", "aligns perfectly",
+    "leverage my", "passionate about", "proven track record", "fast-paced environment",
+    "hit the ground running", "uniquely positioned", "resonates", "i believe my skills",
+)
+
+
+def _style_violations(cover: str) -> List[str]:
+    """Objections a human reviewer would raise; non-empty triggers one rewrite pass."""
+    v = []
+    if "—" in cover or "–" in cover:
+        v.append("contains em/en dashes (use commas, periods, or parentheses)")
+    low = cover.lower()
+    v += [f'stock phrase "{p}"' for p in _BANNED_PHRASES if p in low]
+    return v
+
+
+def _scrub_dashes(cover: str) -> str:
+    """Last-resort mechanical fix so no dash ever ships even if the retry missed one."""
+    cover = re.sub(r"(?<=\d)\s*[–—]\s*(?=\d)", "-", cover)  # numeric ranges -> hyphen
+    return re.sub(r"\s*[—–]\s*", ", ", cover)
+
+
+def _strip_md_bold(s: str) -> str:
+    """Drop stray **markers** the model sometimes emits despite instructions."""
+    return re.sub(r"\*\*(.+?)\*\*", r"\1", s)
 
 
 def _split_sections(text: str):
@@ -242,36 +291,36 @@ def build_resume_docx(struct: str):
         if not line.strip():
             continue
         if line.startswith("NAME:"):
-            p = _tight(doc.add_paragraph(), after=1); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p = _tight(doc.add_paragraph(), after=2); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _run(p, line[5:].strip(), size=22)
         elif line.startswith("CONTACT:"):
-            p = _tight(doc.add_paragraph(), after=5); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p = _tight(doc.add_paragraph(), after=8); p.alignment = WD_ALIGN_PARAGRAPH.CENTER
             _run(p, line[8:].strip(), size=10.5)
         elif line.startswith("SUMMARY:"):
-            _run(_tight(doc.add_paragraph(), after=2), line[8:].strip(), size=11, italic=True)
+            _run(_tight(doc.add_paragraph(), after=3, line=1.05), line[8:].strip(), size=11, italic=True)
         elif line.startswith("## "):
-            p = _tight(doc.add_paragraph(), before=7, after=2)
+            p = _tight(doc.add_paragraph(), before=10, after=3)
             _run(p, line[3:].strip().upper(), size=13, bold=True)
             _bottom_border(p)
         elif line.startswith("@ "):
             org, _, dates = line[2:].partition("::")
-            p = _tight(doc.add_paragraph(), before=3); right_tab(p)
+            p = _tight(doc.add_paragraph(), before=6); right_tab(p)
             _run(p, org.strip(), bold=True)
             if dates.strip():
                 _run(p, "\t" + dates.strip())
         elif line.startswith("> "):
             role, _, dates = line[2:].partition("::")
-            p = _tight(doc.add_paragraph()); right_tab(p)
+            p = _tight(doc.add_paragraph(), after=1); right_tab(p)
             _run(p, role.strip(), italic=True)
             if dates.strip():
                 _run(p, "\t" + dates.strip(), italic=True)
         elif line.lstrip().startswith(("- ", "* ")):
-            p = _tight(doc.add_paragraph(), after=1)
+            p = _tight(doc.add_paragraph(), after=2.5, line=1.05)
             p.paragraph_format.left_indent = Inches(0.23)
             p.paragraph_format.first_line_indent = Inches(-0.13)
             _run(p, "•  " + line.lstrip()[2:].strip())
         else:
-            _run(_tight(doc.add_paragraph()), line.strip())
+            _run(_tight(doc.add_paragraph(), after=2, line=1.05), line.strip())
     return doc
 
 
@@ -289,7 +338,7 @@ def build_cover_docx(text: str):
     for block in re.split(r"\n\s*\n", text.strip()):
         if not block.strip():
             continue
-        p = _tight(doc.add_paragraph(), after=8, line=1.08)
+        p = _tight(doc.add_paragraph(), after=10, line=1.15)
         for i, ln in enumerate(block.split("\n")):
             if i:
                 p.add_run().add_break()
@@ -341,14 +390,29 @@ def generate_for_role(
     """Generate + persist a draft set for one role. Writes editable Google Docs to the
     user's Drive (resume + cover letter), falling back to local files if Drive isn't
     available. Returns a dict of links, or None if already drafted (and not regenerate)."""
-    if not regenerate and store.get_draft(conn, job["id"]):
-        return None
+    if not regenerate and (store.get_draft(conn, job["id"])
+                           or store.get_draft_for_role(conn, job["company"] or "", job["title"] or "")):
+        return None  # never draft the same role twice (even under a re-fetched job id)
 
     full = store.get_job(conn, job["id"]) or job  # select_master rows omit `description`
-    text = llm.complete_text(_draft_prompt(master, voice, full), model=model, system=DRAFT_SYSTEM, max_tokens=12000)
+    prompt = _draft_prompt(master, voice, full)
+    text = llm.complete_text(prompt, model=model, system=DRAFT_SYSTEM, max_tokens=12000)
     resume_md, cover_md, omitted = _split_sections(text)
     if not resume_md or not cover_md:
         raise llm.LLMError(f"Draft generation returned incomplete content for job {job['id']}.")
+
+    issues = _style_violations(cover_md)
+    if issues:  # one corrective pass; the mechanical scrub below is the final guarantee
+        retry = llm.complete_text(
+            prompt + "\n\nYour previous attempt failed style review: " + "; ".join(issues)
+            + ". Regenerate ALL sections with these problems fixed (same grounding rules).",
+            model=model, system=DRAFT_SYSTEM, max_tokens=12000)
+        r2, c2, o2 = _split_sections(retry)
+        if r2 and c2:
+            resume_md, cover_md, omitted = r2, c2, o2
+    resume_md = _strip_md_bold(resume_md)
+    cover_md = _scrub_dashes(_strip_md_bold(cover_md))
+
     company = job["company"] or "Company"
     title = job["title"] or "Role"
 
@@ -378,6 +442,24 @@ def generate_for_role(
         print("   (Not signed in to Google Drive — run `job-agent auth`. Saving locally for now.)")
 
     return _save_local(conn, job, company, title, resume_md, cover_md, omitted, model)
+
+
+def migrate_local_draft(conn: sqlite3.Connection, job: sqlite3.Row, draft: sqlite3.Row) -> Optional[Dict[str, str]]:
+    """Upload an EXISTING local draft pair to Drive unchanged — no LLM call, so the
+    user never gets a second, different pair. Returns links, or None if the local
+    files are gone (caller may then regenerate)."""
+    if not oauth.is_authorized():
+        return None
+    r, c = draft["resume_docx"], draft["cover_docx"]
+    if not (r and c and Path(r).exists() and Path(c).exists()):
+        return None
+    company = draft["company"] or job["company"] or "Company"
+    title = draft["title"] or job["title"] or "Role"
+    links = oauth.upload_drafts(conn, company, title, Path(r).read_bytes(), Path(c).read_bytes())
+    store.record_draft(conn, job["id"], company=company, title=title, dir=links["folder"],
+                       drive_url=links["folder"], resume_url=links["resume_url"],
+                       cover_url=links["cover_url"], model=draft["model"])
+    return {"where": "drive", **links}
 
 
 def run_drafts(

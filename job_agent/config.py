@@ -52,7 +52,9 @@ GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")  # pat
 GOOGLE_OAUTH_TOKEN_PATH = Path(os.environ.get("GOOGLE_OAUTH_TOKEN_PATH") or (PROFILE_DIR / "google_oauth_token.json"))
 
 # --- Discovery cadence ---
-DISCOVERY_INTERVAL_DAYS = 7  # weekly company-discovery scan (skipped if run more recently)
+# Scan on every pipeline run (runs are ~2 days apart; the >=1d guard only stops
+# same-day double scans). Each scan rotates its sector focus so proposals stay fresh.
+DISCOVERY_INTERVAL_DAYS = 1
 
 # --- Delivery (optional email nudge + published site URL) ---
 SMTP_USER = os.environ.get("SMTP_USER")              # Gmail address
